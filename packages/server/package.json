@@ -1,0 +1,33 @@
+{
+  "name": "orderup-server",
+  "version": "0.0.0",
+  "private": true,
+  "description": "OrderUp local server: Claude Code hooks, transcript tail, WebSocket broadcast.",
+  "license": "MIT",
+  "homepage": "https://github.com/enzo-thuilliez/orderup#readme",
+  "bugs": {
+    "url": "https://github.com/enzo-thuilliez/orderup/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/enzo-thuilliez/orderup.git",
+    "directory": "packages/server"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "orderup-shared": "^0.0.0"
+  }
+}

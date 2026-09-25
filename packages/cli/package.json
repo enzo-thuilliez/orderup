@@ -1,0 +1,32 @@
+{
+  "name": "orderup-cli",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Watch your Claude Code sessions come alive as cooks in a cozy 3D kitchen.",
+  "license": "MIT",
+  "author": "Enzo Thuilliez",
+  "homepage": "https://github.com/enzo-thuilliez/orderup#readme",
+  "bugs": {
+    "url": "https://github.com/enzo-thuilliez/orderup/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/enzo-thuilliez/orderup.git",
+    "directory": "packages/cli"
+  },
+  "type": "module",
+  "bin": {
+    "orderup": "./bin/orderup.js"
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "orderup-server": "^0.0.0",
+    "orderup-shared": "^0.0.0"
+  }
+}

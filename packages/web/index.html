@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OrderUp</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 6a10 10 0 0 0-10 10h20A10 10 0 0 0 16 6z' fill='%23c8753f'/%3E%3Crect x='3' y='17' width='26' height='3' rx='1.5' fill='%23fbe9d0'/%3E%3Ccircle cx='16' cy='4.5' r='2' fill='%23c8753f'/%3E%3C/svg%3E"
+    />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #2b1d14;
+      }
+      #app {
+        position: fixed;
+        inset: 0;
+      }
+      #hud {
+        position: fixed;
+        left: 16px;
+        bottom: 16px;
+        color: #fbe9d0;
+        font:
+          14px/1.4 system-ui,
+          sans-serif;
+        opacity: 0.85;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="hud">OrderUp: kitchen opening soon</div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

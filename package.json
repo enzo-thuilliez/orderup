@@ -1,0 +1,67 @@
+{
+  "name": "orderup-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Watch your Claude Code sessions come alive as cooks in a cozy 3D kitchen.",
+  "license": "MIT",
+  "author": "Enzo Thuilliez",
+  "homepage": "https://github.com/enzo-thuilliez/orderup#readme",
+  "bugs": {
+    "url": "https://github.com/enzo-thuilliez/orderup/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/enzo-thuilliez/orderup.git"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c yellow,cyan \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "tsx watch --conditions=source packages/cli/src/index.ts --no-open",
+    "dev:web": "npm run dev -w orderup-web",
+    "build": "tsc -b && npm run build -w orderup-web",
+    "typecheck": "tsc -b && tsc -p packages/web",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "prepare": "simple-git-hooks"
+  },
+  "simple-git-hooks": {
+    "pre-commit": "npx lint-staged",
+    "commit-msg": "npx --no -- commitlint --edit \"$1\""
+  },
+  "lint-staged": {
+    "*.{ts,js,mjs,cjs}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,yml,yaml,css,html}": "prettier --write"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^21.2.3",
+    "@commitlint/config-conventional": "^21.2.3",
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.6.2",
+    "concurrently": "^10.0.5",
+    "eslint": "^10.11.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.12.0",
+    "lint-staged": "^17.5.1",
+    "prettier": "^3.9.9",
+    "simple-git-hooks": "^2.14.0",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.70.1",
+    "vitest": "^5.0.2"
+  },
+  "workspaces": [
+    "packages/shared",
+    "packages/server",
+    "packages/cli",
+    "packages/web"
+  ]
+}

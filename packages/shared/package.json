@@ -1,0 +1,30 @@
+{
+  "name": "orderup-shared",
+  "version": "0.0.0",
+  "private": true,
+  "description": "OrderUp wire protocol: types and constants shared by server and web.",
+  "license": "MIT",
+  "homepage": "https://github.com/enzo-thuilliez/orderup#readme",
+  "bugs": {
+    "url": "https://github.com/enzo-thuilliez/orderup/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/enzo-thuilliez/orderup.git",
+    "directory": "packages/shared"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  }
+}
