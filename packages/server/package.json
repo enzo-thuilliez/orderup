@@ -28,6 +28,10 @@
     "node": ">=22.13"
   },
   "dependencies": {
-    "orderup-shared": "^0.0.0"
+    "orderup-shared": "^0.0.0",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
   }
 }
