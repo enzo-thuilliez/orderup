@@ -106,3 +106,21 @@ ones, supersede them instead.
   - The GitHub repo stays `enzo-thuilliez/orderup`. The product name stays OrderUp.
 - **Consequences:** A 0.0.1 placeholder of `orderup-cli` should be published early to hold
   the name. The `@orderup-cli` org is unused.
+
+## ADR-010: Kitchen text as DOM overlays, scene derived from sessions
+
+- **Status:** accepted (2026-09-25)
+- **Context:** Cooks need readable, changing text (file paths, commands, names) and the page
+  must never drift from what the server says. Text rendered into the WebGL scene is blurry
+  at a distance and costly to redraw every time an activity changes.
+- **Decision:**
+  - Speech bubbles and name tags are DOM elements positioned with three.js `CSS2DRenderer`.
+    Only the order tickets, which hang in the scene, are canvas textures, redrawn when their
+    text changes.
+  - The web keeps no history: a pure reducer turns server messages into the current sessions,
+    and the scene is synced from them (station slots are the only extra state).
+  - `?demo` feeds scripted `ServerMessage`s through the same reducer instead of a separate
+    code path.
+- **Consequences:** Labels stay crisp and cheap to update, but show through walls in walk
+  mode. Placement and animation rules are pure functions under `web/src/logic` and are
+  unit-tested without a browser.
