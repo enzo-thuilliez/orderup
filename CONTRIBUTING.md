@@ -40,6 +40,12 @@ CI runs `lint`, `format:check`, `typecheck`, `test` and `build` on Node 22.13 an
 4. Open a PR against `main` using the template. CI must be green.
 5. Nobody pushes to `main` directly.
 
+## Using Claude Code
+
+The repo ships project permissions in `.claude/settings.json`. Claude Code ignores their
+allow rules until you trust the workspace: run `claude` once in the repo and accept the
+trust dialog. Deny rules (no force pushes, no pushes to `main`) apply either way.
+
 ## Docs to keep in sync
 
 - [docs/architecture.md](docs/architecture.md) when behaviour or the protocol changes.
