@@ -9,33 +9,329 @@
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 6a10 10 0 0 0-10 10h20A10 10 0 0 0 16 6z' fill='%23c8753f'/%3E%3Crect x='3' y='17' width='26' height='3' rx='1.5' fill='%23fbe9d0'/%3E%3Ccircle cx='16' cy='4.5' r='2' fill='%23c8753f'/%3E%3C/svg%3E"
     />
     <style>
+      /* Colours are set as CSS variables from palette.ts by main.ts; these are fallbacks. */
+      :root {
+        --night: #2b1d14;
+        --cream: #fbe9d0;
+        --copper: #c8753f;
+        --tomato: #d9573b;
+        --ticket: #fff8ea;
+        --ink: #3b2a1f;
+        --leaf: #7fa052;
+        --brass: #e0b04a;
+        --steel: #b9b2aa;
+        font:
+          14px/1.4 system-ui,
+          sans-serif;
+      }
       html,
       body {
         margin: 0;
         height: 100%;
         overflow: hidden;
-        background: #2b1d14;
+        background: var(--night);
+        color: var(--cream);
       }
-      #app {
+      #app,
+      #overlay {
         position: fixed;
         inset: 0;
       }
-      #hud {
-        position: fixed;
-        left: 16px;
-        bottom: 16px;
-        color: #fbe9d0;
-        font:
-          14px/1.4 system-ui,
-          sans-serif;
-        opacity: 0.85;
+      #overlay {
         pointer-events: none;
+      }
+      .labels {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+      code {
+        font-family: ui-monospace, Menlo, Consolas, monospace;
+        font-size: 0.92em;
+      }
+
+      /* Speech bubbles and name tags above cooks. */
+      .cook-label {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 3px;
+        transition: opacity 0.2s;
+      }
+      .cook-label .bubble {
+        position: relative;
+        max-width: 240px;
+        padding: 3px 9px;
+        border-radius: 10px;
+        background: var(--ticket);
+        color: var(--ink);
+        font:
+          600 12px/1.3 ui-monospace,
+          Menlo,
+          Consolas,
+          monospace;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        box-shadow: 0 2px 6px rgb(0 0 0 / 0.3);
+      }
+      .cook-label .bubble::after {
+        content: '';
+        position: absolute;
+        left: 50%;
+        bottom: -5px;
+        margin-left: -5px;
+        border: 5px solid transparent;
+        border-bottom: 0;
+        border-top-color: var(--ticket);
+      }
+      .cook-label[data-state='waiting'] .bubble {
+        background: var(--tomato);
+        color: var(--ticket);
+        animation: ring 1.2s infinite;
+      }
+      .cook-label[data-state='waiting'] .bubble::after {
+        border-top-color: var(--tomato);
+      }
+      .cook-label[data-state='done'] .bubble {
+        background: var(--brass);
+        font-size: 14px;
+        font-family: system-ui, sans-serif;
+        font-weight: 800;
+        letter-spacing: 0.02em;
+      }
+      .cook-label[data-state='done'] .bubble::after {
+        border-top-color: var(--brass);
+      }
+      .cook-label .tag {
+        padding: 1px 7px;
+        border-radius: 6px;
+        background: rgb(43 29 20 / 0.72);
+        color: var(--cream);
+        font-size: 11px;
+        font-weight: 600;
+      }
+      .cook-label .tag[data-kind='crew']::before {
+        content: '★ ';
+        color: var(--brass);
+      }
+      .cook-label.commis .bubble {
+        font-size: 10px;
+        padding: 2px 6px;
+        opacity: 0.9;
+      }
+      .cook-label.focus .tag {
+        background: var(--copper);
+        outline: 2px solid var(--cream);
+      }
+      @keyframes ring {
+        0%,
+        40%,
+        100% {
+          transform: rotate(0);
+        }
+        8%,
+        24% {
+          transform: rotate(-4deg);
+        }
+        16%,
+        32% {
+          transform: rotate(4deg);
+        }
+      }
+
+      /* HUD */
+      .hud-status,
+      .hud-help {
+        position: absolute;
+        bottom: 14px;
+        padding: 5px 10px;
+        border-radius: 8px;
+        background: rgb(43 29 20 / 0.6);
+        font-size: 13px;
+      }
+      .hud-status {
+        left: 14px;
+        font-weight: 600;
+      }
+      .hud-help {
+        right: 14px;
+        opacity: 0.85;
+      }
+      .hud-notice {
+        position: absolute;
+        top: 22%;
+        left: 50%;
+        transform: translateX(-50%);
+        max-width: min(520px, 90vw);
+        padding: 14px 20px;
+        border-radius: 12px;
+        background: rgb(43 29 20 / 0.78);
+        font-size: 16px;
+        text-align: center;
+        white-space: pre-line;
+      }
+      .hud-prompt {
+        position: absolute;
+        top: calc(50% + 28px);
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 4px 10px;
+        border-radius: 8px;
+        background: rgb(43 29 20 / 0.7);
+        font-weight: 600;
+      }
+      .hud-crosshair {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 8px;
+        height: 8px;
+        margin: -4px 0 0 -4px;
+        border-radius: 50%;
+        border: 2px solid var(--cream);
+        opacity: 0.8;
+      }
+      [hidden] {
+        display: none !important;
+      }
+
+      /* Cook panel */
+      .panel {
+        position: absolute;
+        top: 14px;
+        right: 14px;
+        bottom: 60px;
+        width: min(360px, calc(100vw - 28px));
+        display: flex;
+        flex-direction: column;
+        border-radius: 14px;
+        background: var(--ticket);
+        color: var(--ink);
+        box-shadow: 0 8px 30px rgb(0 0 0 / 0.4);
+        pointer-events: auto;
+        overflow: hidden;
+      }
+      .panel-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 12px 14px;
+        background: var(--copper);
+        color: var(--ticket);
+      }
+      .panel[data-state='waiting'] .panel-head {
+        background: var(--tomato);
+      }
+      .panel-title {
+        margin: 0;
+        font-size: 18px;
+      }
+      .panel-sub {
+        font-size: 12px;
+        opacity: 0.9;
+      }
+      .panel-close {
+        border: 0;
+        background: none;
+        color: inherit;
+        font-size: 22px;
+        line-height: 1;
+        cursor: pointer;
+      }
+      .panel-body {
+        flex: 1;
+        overflow: auto;
+        padding: 6px 14px 12px;
+      }
+      .panel-section h3 {
+        margin: 12px 0 4px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        opacity: 0.6;
+      }
+      .state {
+        font-weight: 700;
+      }
+      .state-waiting {
+        color: var(--tomato);
+      }
+      .activity,
+      .commis-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 6px;
+      }
+      .activity .target {
+        word-break: break-all;
+      }
+      .tool {
+        padding: 0 6px;
+        border-radius: 5px;
+        background: var(--ink);
+        color: var(--ticket);
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .muted {
+        opacity: 0.65;
+      }
+      .small {
+        font-size: 12px;
+        margin-top: 12px;
+      }
+      .tokens {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 2px 12px;
+        margin: 0;
+      }
+      .tokens dd {
+        margin: 0;
+        text-align: right;
+        font-family: ui-monospace, Menlo, Consolas, monospace;
+      }
+      .chat {
+        border-top: 1px dashed var(--ink);
+        padding: 10px 14px 12px;
+      }
+      .chat-msg.system {
+        font-size: 12px;
+        opacity: 0.7;
+        margin-bottom: 8px;
+      }
+      .chat-form {
+        display: flex;
+        gap: 6px;
+      }
+      .chat-form input {
+        flex: 1;
+        min-width: 0;
+        padding: 6px 8px;
+        border: 1px solid var(--steel);
+        border-radius: 8px;
+        background: transparent;
+        color: inherit;
+      }
+      .chat-form button {
+        padding: 6px 10px;
+        border: 0;
+        border-radius: 8px;
+        background: var(--copper);
+        color: var(--ticket);
+      }
+      .chat-form :disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
       }
     </style>
   </head>
   <body>
     <div id="app"></div>
-    <div id="hud">OrderUp: kitchen opening soon</div>
+    <div id="overlay"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
