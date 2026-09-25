@@ -108,11 +108,43 @@ Defined in `packages/shared/src/protocol.ts`.
 See [SECURITY.md](../SECURITY.md) and ADR-003. In short: `127.0.0.1` only, `Host`/`Origin`
 checks on HTTP and WebSocket, and a per-launch secret before the command channel is enabled.
 
+## Kitchen (web)
+
+`packages/web` renders the sessions it receives; it keeps no state of its own beyond them.
+
+- **Data.** `net/store.ts` is a pure reducer over `ServerMessage`s (`snapshot` replaces all
+  sessions, then `session.upsert` / `session.remove`). `net/connection.ts` opens `/ws` on the
+  page's own origin and reconnects with backoff (0.5 s doubling to 10 s). Malformed frames are
+  dropped. A `hello` with another `PROTOCOL_VERSION` stops the kitchen with a notice.
+- **Placement.** Each session gets a stable slot (lowest free, kept while it lives). The slot
+  picks its station (five islands facing the pass, then five on the back counter), its spot at
+  the pass and its spot at the patio coffee table. Past ten cooks, slots wrap with a small offset.
+  Cooks walk between spots through the island gaps and the back door (`logic/layout.ts`).
+
+| State     | Where           | Pose                                                                                  | Bubble                       |
+| --------- | --------------- | ------------------------------------------------------------------------------------- | ---------------------------- |
+| `working` | Own station     | By tool: chop (Edit/Write), stir (Bash), taste (Read/Grep), read (Web), direct (Task) | `Tool · file or command`     |
+| `waiting` | The pass        | Rings a bell; the pass bell rings too                                                 | "Chef! Need you at the pass" |
+| `done`    | The pass        | Holds up a plate                                                                      | "Order up!"                  |
+| `idle`    | Patio, out back | Sips coffee                                                                           | none                         |
+
+- Cooks present when the page loads start at their spot; later ones walk in through the back
+  door, and removed sessions walk out through it.
+- Commis (subagents) stand beside their chef at 0.68 scale, with their own pose and bubble.
+- Each session has a ticket on the rail: name, state and total tokens.
+- **Demo.** `?demo` replaces the WebSocket with a scripted feed (`demo/script.ts`): five cooks,
+  commis and one crew cook through every state, looping every 15 s. It goes through the same
+  reducer as live data.
+
 ## Web controls
 
-| Input | Action                                                           |
-| ----- | ---------------------------------------------------------------- |
-| Tab   | Toggle orbit overview ↔ first-person walk                        |
-| WASD  | Walk (first-person, pointer lock)                                |
-| E     | Wave at the nearest cook                                         |
-| F     | Open the cook panel: live activity (observed) or chat (crew, V1) |
+| Input         | Action                                                                               |
+| ------------- | ------------------------------------------------------------------------------------ |
+| Tab           | Toggle orbit overview ↔ first-person walk                                            |
+| Drag / scroll | Orbit / zoom (overview)                                                              |
+| Click a cook  | Open its panel (overview)                                                            |
+| WASD, Shift   | Walk, run (first-person; click to capture the mouse)                                 |
+| Arrow keys    | Walk and turn without the mouse                                                      |
+| E             | Wave at the cook in front of you; it waves back                                      |
+| F             | Open / close the cook panel: live activity (observed) or chat (crew, V1 placeholder) |
+| Esc           | Close the panel, release the mouse                                                   |
