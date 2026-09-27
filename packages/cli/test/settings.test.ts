@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { forwarderCommand, HOOK_MARKER } from '../src/forwarder.js';
+import { forwarderHook, HOOK_MARKER } from '../src/forwarder.js';
 import {
   formatSettings,
   HOOK_EVENTS,
@@ -22,7 +22,12 @@ const userSettings = {
   },
 };
 
-const opts = { port: 7717, async: true };
+const NODE = '/usr/local/bin/node';
+const opts = { port: 7717, async: true, node: NODE, execForm: true };
+const ourEntry = (port = 7717) => ({
+  type: 'command',
+  ...forwarderHook({ port, node: NODE, execForm: true }),
+});
 
 const ourHookFor = (settings: Record<string, unknown>, event: string) =>
   (settings.hooks as Groups)[event]?.at(-1)?.hooks[0] ?? {};
@@ -40,8 +45,8 @@ describe('withOurHooks', () => {
     for (const event of HOOK_EVENTS) {
       const ours = ourHookFor(next, event);
       expect(ours.type).toBe('command');
-      expect(ours.command).toBe(forwarderCommand(7717));
-      expect(ours.command).toContain(HOOK_MARKER);
+      expect(ours.command).toBe(NODE);
+      expect((ours.args as string[])[1]).toContain(HOOK_MARKER);
       expect(ours.timeout).toBeLessThanOrEqual(5);
     }
   });
@@ -65,6 +70,21 @@ describe('withOurHooks', () => {
     expect(ourHookFor(sync, 'PreToolUse').async).toBeUndefined();
   });
 
+  it('uses shell form with a quoted absolute node when exec form is unavailable', () => {
+    const node = "/Users/Jo O'Brien/.nvm/versions/node/v22.13.0/bin/node";
+    const hook = ourHookFor(withOurHooks({}, { ...opts, node, execForm: false }), 'Stop');
+    expect(hook.args).toBeUndefined();
+    expect(hook.command).toMatch(/^'\/Users\/Jo O'\\''Brien\/.* -e '\/\*orderup-hook/);
+    expect(hookStatus(withOurHooks({}, { ...opts, node, execForm: false })).nodes).toEqual([node]);
+  });
+
+  it('updates the node path in place when reinstalled from another Node', () => {
+    const before = withOurHooks(userSettings, opts);
+    const after = withOurHooks(before, { ...opts, node: '/opt/node24/bin/node' });
+    expect(hookStatus(after).nodes).toEqual(['/opt/node24/bin/node']);
+    expect(withoutOurHooks(after)).toEqual(userSettings);
+  });
+
   it('creates the hooks object when there is none', () => {
     expect(Object.keys(withOurHooks({}, opts).hooks as object)).toEqual([...HOOK_EVENTS]);
   });
@@ -84,7 +104,7 @@ describe('withoutOurHooks', () => {
   it('keeps user hooks that share a group with ours', () => {
     const mixed = {
       hooks: {
-        Stop: [{ hooks: [userHook, { type: 'command', command: forwarderCommand(7717) }] }],
+        Stop: [{ hooks: [userHook, ourEntry()] }],
       },
     };
     expect(withoutOurHooks(mixed)).toEqual({ hooks: { Stop: [{ hooks: [userHook] }] } });
@@ -99,12 +119,26 @@ describe('withoutOurHooks', () => {
 
 describe('hookStatus', () => {
   it('reports missing, complete and partial installs', () => {
-    expect(hookStatus(userSettings)).toEqual({ installed: false, complete: false, ports: [] });
+    expect(hookStatus(userSettings)).toMatchObject({
+      installed: false,
+      complete: false,
+      ports: [],
+    });
     const full = withOurHooks(userSettings, opts);
-    expect(hookStatus(full)).toEqual({ installed: true, complete: true, ports: [7717] });
+    expect(hookStatus(full)).toEqual({
+      installed: true,
+      complete: true,
+      missing: [],
+      ports: [7717],
+      nodes: [NODE],
+    });
     const hooks = { ...(full.hooks as Groups) };
     delete hooks.Notification;
-    expect(hookStatus({ hooks })).toMatchObject({ installed: true, complete: false });
+    expect(hookStatus({ hooks })).toMatchObject({
+      installed: true,
+      complete: false,
+      missing: ['Notification'],
+    });
   });
 });
 

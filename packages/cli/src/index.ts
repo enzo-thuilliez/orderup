@@ -7,13 +7,8 @@ import { DEFAULT_PORT } from 'orderup-shared';
 import { startServer, type RunningServer } from 'orderup-server';
 import { helpText, parseCliArgs, type CliOptions } from './args.js';
 import { openBrowser } from './browser.js';
-import {
-  detectClaudeVersion,
-  installHooks,
-  supportsQuietAsync,
-  uninstallHooks,
-  type Io,
-} from './hooks.js';
+import { fetchHealth, formatReport, nodeCheck, runDoctor } from './doctor.js';
+import { detectClaudeVersion, installHooks, uninstallHooks, type Io } from './hooks.js';
 import { hookStatus, readSettings, settingsPath } from './settings.js';
 
 const { version } = createRequire(import.meta.url)('../package.json') as { version: string };
@@ -48,18 +43,6 @@ async function confirm(question: string): Promise<boolean> {
   }
 }
 
-/** Is an OrderUp server already answering on this port? */
-async function orderUpRunning(port: number): Promise<boolean> {
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}/health`, {
-      signal: AbortSignal.timeout(1000),
-    });
-    return ((await res.json()) as { ok?: unknown }).ok === true;
-  } catch {
-    return false;
-  }
-}
-
 async function open(url: string, options: CliOptions): Promise<void> {
   if (!options.open) return;
   if (!(await openBrowser(url))) console.log(`Couldn't open a browser. Open ${url} yourself.`);
@@ -77,7 +60,11 @@ async function checkHooks(options: CliOptions, io: Io, file: string): Promise<vo
   const install = `orderup --install-hooks${options.port === DEFAULT_PORT ? '' : ` --port ${options.port}`}`;
 
   if (status.installed) {
-    if (!status.complete || !status.ports.includes(options.port)) {
+    const broken = status.nodes.map(nodeCheck).find((check) => check.level === 'FAIL');
+    if (broken) {
+      io.out(`OrderUp hooks are broken: ${broken.detail.replace(/ Fix: .*$/, '')}\n`);
+      io.out(`Fix them with: ${install}\n`);
+    } else if (!status.complete || !status.ports.includes(options.port)) {
       io.out(`OrderUp hooks in ${file} don't match this run. Update them with: ${install}\n`);
     }
     return;
@@ -95,12 +82,7 @@ async function checkHooks(options: CliOptions, io: Io, file: string): Promise<vo
     io.out(`Skipped. Install them any time with: ${install}\n`);
     return;
   }
-  await installHooks({
-    file,
-    port: options.port,
-    async: supportsQuietAsync(await detectClaudeVersion()),
-    io,
-  });
+  await installHooks({ file, port: options.port, claude: await detectClaudeVersion(), io });
 }
 
 /** Starts the server, or returns null when OrderUp already runs on that port. */
@@ -116,7 +98,7 @@ async function start(
     });
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw err;
-    if (await orderUpRunning(options.port)) return null;
+    if (await fetchHealth(options.port)) return null;
     // ADR-002: never fall back to another port, installed hooks wouldn't find it.
     throw new Error(
       `port ${options.port} is already in use. Free it, or run with --port <n> ` +
@@ -146,12 +128,21 @@ async function main(argv: string[]): Promise<void> {
   const file = settingsPath();
 
   if (options.installHooks) {
-    const claude = await detectClaudeVersion();
-    await installHooks({ file, port: options.port, async: supportsQuietAsync(claude), io });
+    await installHooks({ file, port: options.port, claude: await detectClaudeVersion(), io });
     return;
   }
   if (options.uninstallHooks) {
     await uninstallHooks({ file, io });
+    return;
+  }
+  if (options.doctor) {
+    const report = await runDoctor({
+      file,
+      port: options.port,
+      claude: await detectClaudeVersion(),
+    });
+    io.out(formatReport(report));
+    process.exitCode = report.ok ? 0 : 1;
     return;
   }
 

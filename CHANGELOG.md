@@ -31,3 +31,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - CLI: hooks never slow Claude Code down. A tiny Node forwarder always exits 0, gives up
   after 1.5 s, stays silent when OrderUp is down, and runs in the background on Claude Code
   2.1.119+.
+- CLI: hooks run Node by absolute path, so they work without your shell's PATH (nvm, fnm,
+  volta). The installer warns when that Node belongs to a version manager, and `orderup`
+  warns at start if it's gone.
+- CLI: `orderup --doctor` checks hook entries, their Node, the server, recent events, and
+  sends a live test event through the installed hook.
+- Server: `GET /health` reports `lastHookAt`.

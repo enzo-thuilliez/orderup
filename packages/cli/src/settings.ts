@@ -10,7 +10,13 @@ import {
 } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { forwarderCommand, forwarderPort, isForwarderCommand } from './forwarder.js';
+import {
+  forwarderHook,
+  forwarderNode,
+  forwarderPort,
+  isForwarderHook,
+  type ForwarderOptions,
+} from './forwarder.js';
 
 /** Hook events OrderUp listens to (docs/architecture.md#hook-events). */
 export const HOOK_EVENTS = [
@@ -35,8 +41,7 @@ export const BACKUP_SUFFIX = '.orderup-bak';
 
 type Json = Record<string, unknown>;
 
-export interface HookOptions {
-  port: number;
+export interface HookOptions extends ForwarderOptions {
   /** Run in the background (`async: true`) so Claude Code never waits on OrderUp. */
   async: boolean;
 }
@@ -46,8 +51,12 @@ export interface HookStatus {
   installed: boolean;
   /** Every event in HOOK_EVENTS has an OrderUp hook. */
   complete: boolean;
+  /** Events in HOOK_EVENTS without an OrderUp hook. */
+  missing: string[];
   /** Ports the installed hooks post to. */
   ports: number[];
+  /** Node binaries the installed hooks run (a path, or `node` for a PATH lookup). */
+  nodes: string[];
 }
 
 export class SettingsError extends Error {}
@@ -64,17 +73,17 @@ function isObject(value: unknown): value is Json {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function ourHook(event: string, { port, async }: HookOptions): Json {
+function ourHook(event: string, { async, ...forwarder }: HookOptions): Json {
   return {
     type: 'command',
-    command: forwarderCommand(port),
+    ...forwarderHook(forwarder),
     timeout: HOOK_TIMEOUT_S,
     ...(async && !SYNC_EVENTS.has(event) ? { async: true } : {}),
   };
 }
 
 function isOurs(hook: unknown): boolean {
-  return isObject(hook) && hook.type === 'command' && isForwarderCommand(hook.command);
+  return isObject(hook) && hook.type === 'command' && isForwarderHook(hook);
 }
 
 /** The `hooks` object of a settings file, validated just enough to edit it safely. */
@@ -90,25 +99,36 @@ function hooksOf(settings: Json): Record<string, unknown[]> | undefined {
   return hooks as Record<string, unknown[]>;
 }
 
-export function hookStatus(settings: Json): HookStatus {
-  const hooks = hooksOf(settings) ?? {};
-  const ports = new Set<number>();
-  const covered = new Set<string>();
-  for (const [event, groups] of Object.entries(hooks)) {
+/** OrderUp's hook entries, with the event each one is under. */
+export function ourHooks(settings: Json): { event: string; hook: Json }[] {
+  const found: { event: string; hook: Json }[] = [];
+  for (const [event, groups] of Object.entries(hooksOf(settings) ?? {})) {
     for (const group of groups) {
       if (!isObject(group) || !Array.isArray(group.hooks)) continue;
-      for (const hook of group.hooks) {
-        if (!isOurs(hook)) continue;
-        covered.add(event);
-        const port = forwarderPort((hook as Json).command as string);
-        if (port !== null) ports.add(port);
-      }
+      for (const hook of group.hooks) if (isOurs(hook)) found.push({ event, hook: hook as Json });
     }
   }
+  return found;
+}
+
+export function hookStatus(settings: Json): HookStatus {
+  const found = ourHooks(settings);
+  const covered = new Set(found.map(({ event }) => event));
+  const ports = new Set<number>();
+  const nodes = new Set<string>();
+  for (const { hook } of found) {
+    const port = forwarderPort(hook);
+    if (port !== null) ports.add(port);
+    const node = forwarderNode(hook);
+    if (node !== null) nodes.add(node);
+  }
+  const missing = HOOK_EVENTS.filter((event) => !covered.has(event));
   return {
-    installed: covered.size > 0,
-    complete: HOOK_EVENTS.every((event) => covered.has(event)),
+    installed: found.length > 0,
+    complete: missing.length === 0,
+    missing,
     ports: [...ports],
+    nodes: [...nodes],
   };
 }
 

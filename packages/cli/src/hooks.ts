@@ -1,7 +1,9 @@
 import { execFile } from 'node:child_process';
 import { formatDiff } from './diff.js';
+import { versionManagerWarning } from './node-path.js';
 import {
   BACKUP_SUFFIX,
+  type HookOptions,
   formatSettings,
   readSettings,
   withOurHooks,
@@ -11,6 +13,9 @@ import {
 
 /** First Claude Code release where background hook completions are silent (ADR-011). */
 export const QUIET_ASYNC_HOOKS_VERSION = '2.1.119';
+
+/** First Claude Code release with exec-form command hooks (`args`, no shell). */
+export const EXEC_FORM_HOOKS_VERSION = '2.1.139';
 
 export interface Io {
   out(text: string): void;
@@ -47,9 +52,21 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-/** Background hooks only when we know Claude Code runs them silently. */
-export function supportsQuietAsync(version: string | null): boolean {
-  return version !== null && compareVersions(version, QUIET_ASYNC_HOOKS_VERSION) >= 0;
+function atLeast(version: string | null, minimum: string): boolean {
+  return version !== null && compareVersions(version, minimum) >= 0;
+}
+
+/**
+ * What to install for this machine. Features the Claude Code version can't be confirmed to
+ * support are left out: an unknown version gets synchronous, shell-form hooks.
+ */
+export function hookOptions(port: number, claude: string | null, node: string): HookOptions {
+  return {
+    port,
+    node,
+    async: atLeast(claude, QUIET_ASYNC_HOOKS_VERSION),
+    execForm: atLeast(claude, EXEC_FORM_HOOKS_VERSION),
+  };
 }
 
 async function applyChange(
@@ -76,13 +93,16 @@ async function applyChange(
 export async function installHooks(options: {
   file: string;
   port: number;
-  async: boolean;
+  /** Installed Claude Code version, from detectClaudeVersion(). */
+  claude: string | null;
+  /** Node binary for the hooks. Default: the one running OrderUp. */
+  node?: string;
   io: Io;
 }): Promise<InstallResult> {
-  const { file, port, async, io } = options;
+  const { file, port, claude, node = process.execPath, io } = options;
   const result = await applyChange(
     file,
-    (settings) => withOurHooks(settings, { port, async }),
+    (settings) => withOurHooks(settings, hookOptions(port, claude, node)),
     'Write these hooks to settings.json? [y/N] ',
     io,
   );
@@ -90,6 +110,8 @@ export async function installHooks(options: {
   if (result === 'cancelled') io.out('No changes made.\n');
   if (result === 'written') {
     io.out('Hooks installed. Claude Code picks them up automatically, no restart needed.\n');
+    const warning = versionManagerWarning(node);
+    if (warning) io.out(warning);
   }
   return result === 'written' ? 'installed' : result;
 }

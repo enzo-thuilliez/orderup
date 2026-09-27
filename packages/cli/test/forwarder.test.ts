@@ -2,7 +2,15 @@ import { spawn } from 'node:child_process';
 import { createServer, type AddressInfo, type Server } from 'node:net';
 import { startServer, type RunningServer } from 'orderup-server';
 import { afterEach, describe, expect, it } from 'vitest';
-import { FORWARDER_BUDGET_MS, forwarderCommand, forwarderPort } from '../src/forwarder.js';
+import {
+  FORWARDER_BUDGET_MS,
+  forwarderHook,
+  forwarderNode,
+  forwarderPort,
+  forwarderScript,
+  shellQuote,
+  type HookCommand,
+} from '../src/forwarder.js';
 
 interface Run {
   code: number | null;
@@ -11,11 +19,17 @@ interface Run {
   ms: number;
 }
 
-/** Runs the hook command through a shell, as Claude Code does, with `payload` on stdin. */
-function runHook(port: number, payload: string): Promise<Run> {
+/**
+ * Runs a hook the way Claude Code does (exec form directly, shell form through `sh -c`),
+ * with an empty PATH: the absolute node path must be enough, as under nvm.
+ */
+function runHook(hook: HookCommand, payload: string): Promise<Run> {
   const started = Date.now();
   return new Promise((resolve, reject) => {
-    const child = spawn('sh', ['-c', forwarderCommand(port)], { stdio: 'pipe' });
+    const env = { ...process.env, PATH: '' };
+    const child = hook.args
+      ? spawn(hook.command, hook.args, { stdio: 'pipe', env })
+      : spawn('/bin/sh', ['-c', hook.command], { stdio: 'pipe', env });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (d: Buffer) => (stdout += d.toString()));
@@ -34,7 +48,11 @@ const payload = JSON.stringify({
   tool_input: { command: 'echo \'quotes\' "and" $HOME `ticks`' },
 });
 
-describe.skipIf(process.platform === 'win32')('hook forwarder', () => {
+describe.skipIf(process.platform === 'win32').each([
+  { form: 'exec form', execForm: true },
+  { form: 'shell form', execForm: false },
+])('hook forwarder ($form)', ({ execForm }) => {
+  const hook = (port: number) => forwarderHook({ port, node: process.execPath, execForm });
   let server: RunningServer | undefined;
   let blackHole: Server | undefined;
   afterEach(async () => {
@@ -44,9 +62,9 @@ describe.skipIf(process.platform === 'win32')('hook forwarder', () => {
     blackHole = undefined;
   });
 
-  it('delivers the payload to a running OrderUp, silently', async () => {
+  it('delivers the payload to a running OrderUp, silently, without PATH', async () => {
     server = await startServer({ port: 0, projectsDir: false });
-    const run = await runHook(server.port, payload);
+    const run = await runHook(hook(server.port), payload);
     expect(run).toMatchObject({ code: 0, stdout: '', stderr: '' });
     expect(server.store.get('fwd-1')).toMatchObject({
       state: 'working',
@@ -58,7 +76,7 @@ describe.skipIf(process.platform === 'win32')('hook forwarder', () => {
     const probe = await startServer({ port: 0, projectsDir: false });
     const port = probe.port;
     await probe.close();
-    const run = await runHook(port, payload);
+    const run = await runHook(hook(port), payload);
     expect(run).toMatchObject({ code: 0, stdout: '', stderr: '' });
     expect(run.ms).toBeLessThan(1000);
   });
@@ -67,14 +85,34 @@ describe.skipIf(process.platform === 'win32')('hook forwarder', () => {
     const hole = createServer(() => undefined);
     blackHole = hole;
     await new Promise<void>((resolve) => hole.listen(0, '127.0.0.1', resolve));
-    const run = await runHook((hole.address() as AddressInfo).port, payload);
+    const run = await runHook(hook((hole.address() as AddressInfo).port), payload);
     expect(run).toMatchObject({ code: 0, stdout: '', stderr: '' });
     expect(run.ms).toBeLessThan(FORWARDER_BUDGET_MS + 1000);
   }, 10_000);
+});
 
-  it('records its port and needs no quoting beyond one pair of single quotes', () => {
-    expect(forwarderPort(forwarderCommand(8123))).toBe(8123);
-    const script = forwarderCommand(7717).slice("node -e '".length, -1);
-    expect(script).not.toMatch(/['"]/);
+describe('forwarder entries', () => {
+  it('reads back the port and node of both forms', () => {
+    for (const node of ['/usr/bin/node', "/Users/Jo O'Brien/.nvm/versions/node/v22/bin/node"]) {
+      for (const execForm of [true, false]) {
+        const hook = forwarderHook({ port: 8123, node, execForm });
+        expect(forwarderPort(hook)).toBe(8123);
+        expect(forwarderNode(hook)).toBe(node);
+      }
+    }
+    expect(forwarderNode({ command: `node -e '${forwarderScript(7717)}'` })).toBe('node');
+    expect(forwarderNode({ command: 'say done' })).toBeNull();
+  });
+
+  it('needs no quoting inside its single-quoted script', () => {
+    expect(forwarderScript(7717)).not.toMatch(/['"]/);
+  });
+
+  it('quotes only what needs it', () => {
+    expect(shellQuote('/usr/local/bin/node')).toBe('/usr/local/bin/node');
+    expect(shellQuote('C:\\Program Files\\nodejs\\node.exe')).toBe(
+      "'C:\\Program Files\\nodejs\\node.exe'",
+    );
+    expect(shellQuote("it's")).toBe("'it'\\''s'");
   });
 });

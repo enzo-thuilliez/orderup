@@ -44,6 +44,7 @@ orderup [options]
   --demo              open the kitchen with a scripted demo instead of live sessions
   --install-hooks     add OrderUp hooks to ~/.claude/settings.json (shows the diff first)
   --uninstall-hooks   remove OrderUp hooks from ~/.claude/settings.json
+  --doctor            check hooks, their Node, the server and event delivery
   -h, --help          show this help
   -v, --version       print the version
 ```
@@ -59,6 +60,13 @@ orderup [options]
   one-line Node command that forwards the event to `127.0.0.1` and always exits 0. It gives
   up within 1.5 s and says nothing when OrderUp isn't running, so Claude Code never waits
   on it. On Claude Code 2.1.119+ hooks run in the background.
+- **nvm, fnm, volta…** Hooks run the Node you installed them with, by absolute path, so
+  they work even when Claude Code runs them without your shell's PATH. They stay on that
+  Node version: after switching versions, run `orderup --install-hooks` again to update
+  them.
+- **Something off?** `orderup --doctor` checks the hook entries, that their Node still
+  exists, that the kitchen is reachable, when the last hook event arrived, and sends a test
+  event through the installed hook.
 
 ## How it works
 

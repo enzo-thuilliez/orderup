@@ -9,6 +9,14 @@ export const DEFAULT_PORT = 7717;
 /** Bump on any breaking change to the messages below. */
 export const PROTOCOL_VERSION = 1;
 
+/** `GET /health`: lets the CLI find a running OrderUp and `orderup --doctor` check hooks. */
+export interface HealthResponse {
+  ok: true;
+  protocol: number;
+  /** Epoch ms of the last hook payload received (any event), or null since start. */
+  lastHookAt: number | null;
+}
+
 /**
  * - `observed`: any Claude Code session on this machine. Read-only, zero tokens.
  * - `crew`: a persistent role run by the server via the Claude Agent SDK. Can be talked to, costs tokens.

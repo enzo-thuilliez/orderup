@@ -26,8 +26,10 @@ We aim to acknowledge reports within a week. Only the latest `main` is supported
 - **Data written:** `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json`), only
   when you confirm a hook install or uninstall, after showing the diff, with a backup
   (`settings.json.orderup-bak`). Nothing else in V0.
-- **Hooks:** each installed hook runs `node -e` with an inline script that sends the hook
-  payload to `127.0.0.1:<port>/hook` and exits 0. It makes no other network call.
+- **Hooks:** each installed hook runs your Node (absolute path) with an inline script that
+  sends the hook payload to `127.0.0.1:<port>/hook` and exits 0. It makes no other network
+  call. `orderup --doctor` runs that same command once with a synthetic event that carries
+  no session data.
 - **No LLM calls** when watching sessions. **No telemetry.** Nothing leaves your machine.
 
 ## Future crew mode (V1)

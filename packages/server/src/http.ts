@@ -2,7 +2,7 @@ import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import type { IncomingMessage, RequestListener, ServerResponse } from 'node:http';
 import path from 'node:path';
-import { PROTOCOL_VERSION } from 'orderup-shared';
+import { PROTOCOL_VERSION, type HealthResponse } from 'orderup-shared';
 
 /** Hook payloads include tool inputs, which can hold whole files (Write). */
 const MAX_HOOK_BYTES = 8 * 1024 * 1024;
@@ -43,6 +43,7 @@ export interface HttpOptions {
 
 export function createRequestHandler({ guard, onHook, webRoot }: HttpOptions): RequestListener {
   const root = webRoot ? path.resolve(webRoot) : null;
+  let lastHookAt: number | null = null;
 
   return (req, res) => {
     res.setHeader('x-content-type-options', 'nosniff');
@@ -53,12 +54,8 @@ export function createRequestHandler({ guard, onHook, webRoot }: HttpOptions): R
 
     if (pathname === '/health' && req.method === 'GET') {
       res.setHeader('cache-control', 'no-store');
-      return send(
-        res,
-        200,
-        JSON.stringify({ ok: true, protocol: PROTOCOL_VERSION }),
-        'application/json',
-      );
+      const health: HealthResponse = { ok: true, protocol: PROTOCOL_VERSION, lastHookAt };
+      return send(res, 200, JSON.stringify(health), 'application/json');
     }
     if (pathname === '/hook') {
       if (req.method !== 'POST') return send(res, 405, 'method not allowed');
@@ -74,6 +71,8 @@ export function createRequestHandler({ guard, onHook, webRoot }: HttpOptions): R
           } catch {
             return send(res, 400, 'invalid json');
           }
+          // Any well-formed payload counts, even events OrderUp ignores (orderup --doctor).
+          lastHookAt = Date.now();
           try {
             onHook(payload);
           } catch {

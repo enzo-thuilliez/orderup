@@ -32,7 +32,19 @@ describe('startServer', () => {
     expect(url).toBe(`http://127.0.0.1:${port}`);
     const res = await rawRequest(port, { path: '/health' });
     expect(res.status).toBe(200);
-    expect(JSON.parse(res.body)).toEqual({ ok: true, protocol: PROTOCOL_VERSION });
+    expect(JSON.parse(res.body)).toEqual({
+      ok: true,
+      protocol: PROTOCOL_VERSION,
+      lastHookAt: null,
+    });
+  });
+
+  it('reports when the last hook payload arrived, even an ignored event', async () => {
+    const { port } = await start();
+    const before = Date.now();
+    await postHook(port, { session_id: 'doc', hook_event_name: 'OrderUpDoctor' });
+    const res = await rawRequest(port, { path: '/health' });
+    expect(JSON.parse(res.body).lastHookAt).toBeGreaterThanOrEqual(before);
   });
 
   it('streams hello, snapshot, then upserts driven by hooks', async () => {
