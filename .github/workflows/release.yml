@@ -36,7 +36,8 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v5
+      # v6.1+: registry-url no longer writes the always-auth setting npm 11 warns about.
+      - uses: actions/setup-node@v6
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
@@ -70,6 +71,18 @@ jobs:
       - run: mkdir -p "$RUNNER_TEMP/pack" && npm pack -w orderup-cli --pack-destination "$RUNNER_TEMP/pack"
       - name: Smoke-test the packed orderup-cli
         run: node scripts/smoke-pack.mjs "$RUNNER_TEMP"/pack/orderup-cli-*.tgz
+
+      # npm silently rewrites a manifest it considers wrong (and says "invalid and removed" even
+      # when it only normalized a path). Publish exactly what is committed, or nothing.
+      - name: Check that npm publishes package.json as committed
+        run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/publish-dry-run.log"
+          npm publish -w orderup-cli --dry-run 2>&1 | tee "$log"
+          if grep -iE 'auto-corrected|errors corrected|invalid and removed|removed invalid|was renamed to' "$log"; then
+            echo "::error::npm would auto-correct packages/cli/package.json. Run npm pkg fix -w orderup-cli and commit the result."
+            exit 1
+          fi
 
       - name: Publish
         run: |

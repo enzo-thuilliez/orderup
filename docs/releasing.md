@@ -63,7 +63,9 @@ notes still go under `Unreleased` in [CHANGELOG.md](../CHANGELOG.md).
 
 8. Approve the `npm` environment deployment in the run. The workflow checks that the tag
    matches the package version and that the version isn't on npm yet, runs the full CI
-   sequence and the smoke test, then publishes with provenance.
+   sequence and the smoke test, and runs `npm publish --dry-run`: it fails if npm would
+   auto-correct `packages/cli/package.json` (fix with `npm pkg fix -w orderup-cli`). Then it
+   publishes with provenance.
 9. Verify: `npm view orderup-cli version`, the provenance badge on the npm page, and
    `npx orderup-cli@x.y.z --version` from another directory.
 
