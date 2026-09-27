@@ -56,10 +56,13 @@ cpSync(webBuild, path.join(cli, 'dist', 'web'), {
 });
 
 // npm shows the package README on npmjs.com, where repo-relative links don't resolve.
-const readme = readFileSync(path.join(root, 'README.md'), 'utf8').replace(
-  /\]\((?!https?:|#|mailto:)([^)]+)\)/g,
-  (_, link) => `](${repoUrl}/blob/main/${link})`,
-);
+// Images (the demo GIF) need the raw file, links the GitHub page.
+const readme = readFileSync(path.join(root, 'README.md'), 'utf8')
+  .replace(
+    /\bsrc="(?!https?:)([^"]+)"/g,
+    (_, file) => `src="https://raw.githubusercontent.com/enzo-thuilliez/orderup/main/${file}"`,
+  )
+  .replace(/\]\((?!https?:|#|mailto:)([^)]+)\)/g, (_, link) => `](${repoUrl}/blob/main/${link})`);
 writeFileSync(path.join(cli, 'README.md'), readme);
 cpSync(path.join(root, 'LICENSE'), path.join(cli, 'LICENSE'));
 
