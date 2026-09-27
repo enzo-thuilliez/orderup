@@ -23,7 +23,7 @@
   },
   "type": "module",
   "bin": {
-    "orderup": "./bin/orderup.js"
+    "orderup": "bin/orderup.js"
   },
   "files": [
     "bin",
