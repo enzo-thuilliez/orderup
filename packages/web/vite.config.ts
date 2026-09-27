@@ -13,8 +13,9 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: {
-      '/health': api,
-      '/ws': { target: api, ws: true },
+      // changeOrigin: the server only accepts its own Host (ADR-003).
+      '/health': { target: api, changeOrigin: true },
+      '/ws': { target: api, ws: true, changeOrigin: true },
     },
   },
   build: {

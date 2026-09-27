@@ -5,6 +5,8 @@ import { startServer } from 'orderup-server';
 
 const { version } = createRequire(import.meta.url)('../package.json') as { version: string };
 
+const VITE_DEV_ORIGIN = 'http://localhost:5173';
+
 const HELP = `orderup ${version}: watch your Claude Code sessions cook
 
 Usage: orderup [options]
@@ -22,6 +24,8 @@ async function main(argv: string[]): Promise<void> {
     options: {
       port: { type: 'string' },
       open: { type: 'boolean', default: true },
+      // Undocumented: also accept the Vite dev server origin (npm run dev).
+      dev: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'v' },
     },
@@ -41,7 +45,10 @@ async function main(argv: string[]): Promise<void> {
     throw new Error(`invalid --port: ${values.port}`);
   }
 
-  const server = await startServer({ port });
+  const server = await startServer({
+    port,
+    allowedOrigins: values.dev ? [VITE_DEV_ORIGIN] : [],
+  });
   console.log(`OrderUp kitchen open at ${server.url}`);
   // Stub: browser opening (unless --no-open) and the hook install prompt arrive with feat(cli).
 

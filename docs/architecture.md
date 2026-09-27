@@ -41,32 +41,54 @@ working ──Notification / PermissionRequest──▶ waiting
    │                                            │
    └──Stop──▶ done ──(quiet 5 min)──▶ idle ─────┘
 SessionEnd (any state) ──▶ removed
+idle for 2 h ──▶ forgotten
 ```
 
 ### Hook → state
 
-| Hook event                                     | State / effect                      | In the kitchen                        |
-| ---------------------------------------------- | ----------------------------------- | ------------------------------------- |
-| `SessionStart`                                 | create session, `idle`              | A cook arrives                        |
-| `UserPromptSubmit`                             | `working`                           | New ticket, cook heads to the station |
-| `PreToolUse`                                   | `working`, activity = tool + target | Cooking; bubble shows file or command |
-| `PostToolUse`                                  | `working`, activity kept briefly    | Keeps cooking                         |
-| `PreToolUse` (`Task`/`Agent`), `SubagentStart` | add subagent                        | A commis appears next to the chef     |
-| `SubagentStop`                                 | remove subagent                     | The commis leaves                     |
-| `Notification`, `PermissionRequest`            | `waiting`                           | The bell rings at the pass            |
-| `Stop`                                         | `done`                              | Plate at the pass, "Order up!"        |
-| no event for 5 min while `done`                | `idle`                              | Coffee break out back                 |
-| `SessionEnd`                                   | remove session                      | Cook leaves by the back door          |
+| Hook event                           | State / effect                          | In the kitchen                        |
+| ------------------------------------ | --------------------------------------- | ------------------------------------- |
+| `SessionStart`                       | create session, `idle`                  | A cook arrives                        |
+| `UserPromptSubmit`                   | `working`                               | New ticket, cook heads to the station |
+| `PreToolUse`                         | `working`, activity = tool + target     | Cooking; bubble shows file or command |
+| `PostToolUse`, `PostToolUseFailure`  | `working`, activity kept until the next | Keeps cooking                         |
+| `PreToolUse` for `Task`/`Agent`      | add subagent, keyed by `tool_use_id`    | A commis appears next to the chef     |
+| `PostToolUse` for `Task`/`Agent`     | remove that subagent                    | The commis leaves                     |
+| `PermissionRequest`, `Notification`  | `waiting`                               | The bell rings at the pass            |
+| `Notification` of type `idle_prompt` | ignored (the turn is already `done`)    |                                       |
+| `Stop`                               | `done`, subagents cleared               | Plate at the pass, "Order up!"        |
+| `SessionEnd`                         | remove session                          | Cook leaves by the back door          |
 
-Token usage comes from transcripts only and updates the ticket on the rail.
+Subagent tool calls report the parent's `session_id`, so they show as the chef's activity.
+Background subagents return from `Task` immediately, so their commis leaves early (V0 limit).
 
-### Transcript-only fallback (no hooks)
+### Timers (store)
 
-| Last transcript entry                      | Inferred state |
-| ------------------------------------------ | -------------- |
-| User message or assistant `tool_use`       | `working`      |
-| Assistant message with no pending tool use | `done`         |
-| No new lines for 5 min                     | `idle`         |
+| Condition                           | Effect            | In the kitchen          |
+| ----------------------------------- | ----------------- | ----------------------- |
+| `done` with no events for 5 min     | `idle`            | Coffee break out back   |
+| `working` with no events for 30 min | `idle`            | Terminal closed quietly |
+| `idle` with no events for 2 h       | session forgotten | Cook goes home          |
+
+`waiting` never times out: the bell keeps ringing until someone answers.
+
+### Transcripts
+
+The tail watches `$CLAUDE_CONFIG_DIR/projects` (default `~/.claude/projects`) recursively. At
+startup it reads transcripts modified in the last hour; after that it reads any transcript
+that changes, from the beginning the first time.
+
+- **Tokens:** every assistant line's `message.usage`, deduplicated by `message.id` (one
+  message is written over several lines), summed per `sessionId`. Sidechain (subagent) lines
+  count towards their session's ticket.
+- **State**, only for sessions that never sent a hook (ADR-001):
+
+| Transcript line                                   | Event                    |
+| ------------------------------------------------- | ------------------------ |
+| User message (not meta, not a slash-command echo) | `prompt` → `working`     |
+| Assistant `tool_use`                              | `tool.start` → `working` |
+| User `tool_result`                                | `tool.end`               |
+| Assistant with `stop_reason: end_turn`, no tool   | `stop` → `done`          |
 
 `waiting` is not detectable from transcripts (permission prompts aren't written there).
 
@@ -75,24 +97,31 @@ Token usage comes from transcripts only and updates the ticket on the rail.
 All hook payloads share `session_id`, `transcript_path`, `cwd`, `hook_event_name` and usually
 `permission_mode`. Event-specific fields OrderUp uses:
 
-| Event               | Fields used                                        |
-| ------------------- | -------------------------------------------------- |
-| `SessionStart`      | `source` (`startup`, `resume`, `clear`, `compact`) |
-| `UserPromptSubmit`  | none (`prompt` is dropped, never stored)           |
-| `PreToolUse`        | `tool_name`, `tool_input` (file path or command)   |
-| `PostToolUse`       | `tool_name`                                        |
-| `Notification`      | `message`, notification type when present          |
-| `PermissionRequest` | `tool_name`                                        |
-| `Stop`              | none                                               |
-| `SubagentStart`     | `agent_id`, `agent_type`                           |
-| `SubagentStop`      | `agent_id`                                         |
-| `SessionEnd`        | `reason`                                           |
+| Event                               | Fields used                              |
+| ----------------------------------- | ---------------------------------------- |
+| `SessionStart`                      | none beyond the common ones              |
+| `UserPromptSubmit`                  | none (`prompt` is never read)            |
+| `PreToolUse`                        | `tool_name`, `tool_input`, `tool_use_id` |
+| `PostToolUse`, `PostToolUseFailure` | `tool_name`, `tool_use_id`               |
+| `PermissionRequest`                 | none beyond the common ones              |
+| `Notification`                      | `notification_type`, `message`           |
+| `Stop`, `SessionEnd`                | none beyond the common ones              |
 
-Payloads differ across Claude Code versions (checked against 2.1.x). The server treats every
-field except `session_id` and `hook_event_name` as optional.
+Other events (`SubagentStart`, `SubagentStop`, `PreCompact`, …) are accepted and ignored.
+Payloads differ across Claude Code versions (checked against 2.1.x): every field except
+`session_id` and `hook_event_name` is optional.
 
-Installed hooks POST the payload to `http://127.0.0.1:<port>/hook` with a short timeout and
-always exit 0, so a stopped OrderUp never blocks Claude Code.
+The bubble target comes from `tool_input`: `file_path` / `notebook_path` / `path` (relative
+to `cwd` when inside it), else the first line of `command`, `pattern`, `url`, `query` or
+`description`, truncated to 80 characters.
+
+### `POST /hook`
+
+- Body: the hook payload as JSON, `content-type: application/json` required (415 otherwise),
+  8 MiB max (413).
+- Response: `204 No Content`, even if OrderUp ignores the event.
+- Installed hooks use a short timeout and always exit 0, so a stopped OrderUp never blocks
+  Claude Code.
 
 ## Wire protocol
 
