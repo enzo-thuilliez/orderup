@@ -35,3 +35,53 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - run: npm pack -w orderup-cli --pack-destination "$RUNNER_TEMP/pack"
+      - name: Smoke-test the packed orderup-cli
+        run: node scripts/smoke-pack.mjs "$RUNNER_TEMP"/pack/orderup-cli-*.tgz
+      - if: matrix.node == '24'
+        uses: actions/upload-artifact@v4
+        with:
+          name: orderup-cli-tarball
+          path: ${{ runner.temp }}/pack/orderup-cli-*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  # The tarball from Linux, installed and run on the other platforms users have.
+  smoke:
+    name: smoke (${{ matrix.os }}, node ${{ matrix.node }})
+    needs: ci
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+        node: ['22.13.0', '24']
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: orderup-cli-tarball
+          path: pack
+      - run: node scripts/smoke-pack.mjs pack/orderup-cli-*.tgz
+
+  # The one check branch protection requires: green only if every job above is.
+  ci-pass:
+    name: ci-pass
+    if: always()
+    needs: [ci, smoke]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check that every CI job passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          for result in $RESULTS; do
+            [ "$result" = success ] || exit 1
+          done
