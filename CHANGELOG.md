@@ -37,3 +37,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - CLI: `orderup --doctor` checks hook entries, their Node, the server, recent events, and
   sends a live test event through the installed hook.
 - Server: `GET /health` reports `lastHookAt`.
+- Kitchen (web): per-state cook animations. Working cooks chop, stir or taste with steam over
+  the station; waiting cooks ring the bell and bounce under a "!"; done cooks carry the plate to
+  the pass and pop an "Order up!"; idle cooks sip, stretch and look around, each on their own
+  rhythm. Poses blend instead of snapping.
+- Kitchen (web): commis pop in beside their chef, help while the chef works, and wave goodbye
+  before they leave.
+- Kitchen (web): honours `prefers-reduced-motion`: cooks go straight to their spot and hold
+  still poses, with no hops, pops, steam or bubble animations.
+- Kitchen (web): `?demo=N` runs the demo with up to 40 cooks, and `?fps` shows frame rate,
+  frame and animation time and draw calls. Cook figures are 7 meshes instead of ~23.

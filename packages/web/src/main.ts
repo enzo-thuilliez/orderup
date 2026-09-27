@@ -2,7 +2,7 @@ import type { ServerMessage } from 'orderup-shared';
 import * as THREE from 'three';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 import { CameraRig } from './controls/cameraRig';
-import { DemoFeed, isDemo } from './demo/script';
+import { DemoFeed, demoCount, isDemo } from './demo/script';
 import { displayName, nearest } from './logic/cook';
 import { Connection, socketUrl } from './net/connection';
 import { applyMessage, initialState, withStatus, type ConnectionStatus } from './net/store';
@@ -57,6 +57,15 @@ const rig = new CameraRig(camera, renderer.domElement);
 const hud = new Hud(overlay);
 const panel = new Panel(overlay);
 
+// Honour the OS "reduce motion" setting, live.
+const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+let reducedMotion = motionQuery.matches;
+cooks.setReducedMotion(reducedMotion);
+motionQuery.addEventListener('change', (e) => {
+  reducedMotion = e.matches;
+  cooks.setReducedMotion(reducedMotion);
+});
+
 // --- Data: the server's WebSocket, or the scripted demo ---------------------------------------
 
 const demo = isDemo(location.search);
@@ -74,7 +83,7 @@ function setStatus(status: ConnectionStatus): void {
 }
 
 if (demo) {
-  new DemoFeed(dispatch).start();
+  new DemoFeed(dispatch, undefined, undefined, demoCount(location.search)).start();
 } else {
   const conn = new Connection({
     url: socketUrl(location),
@@ -196,7 +205,19 @@ let elapsed = 0;
 let panelTick = 0;
 let lastFocus: string | null = null;
 
+// `?fps`: frame rate and time spent per frame on the CPU (animation, render calls, labels).
+const perf = new URLSearchParams(location.search).has('fps') ? document.createElement('div') : null;
+if (perf) {
+  perf.className = 'hud-perf';
+  overlay.append(perf);
+}
+let perfFrames = 0;
+let perfCpu = 0;
+let perfAnim = 0;
+let perfSince = performance.now();
+
 renderer.setAnimationLoop((now) => {
+  const frameStart = performance.now();
   timer.update(now);
   const dt = Math.min(timer.getDelta(), 0.25);
   elapsed += dt;
@@ -209,10 +230,13 @@ renderer.setAnimationLoop((now) => {
   }
 
   rig.update(dt);
+  const animStart = performance.now();
   cooks.update(dt);
+  perfAnim += performance.now() - animStart;
   let ringing = false;
   for (const s of state.sessions.values()) if (s.state === 'waiting') ringing = true;
-  kitchen.update(elapsed, ringing);
+  // Reduced motion: the stove flames and the pass bell hold still too.
+  kitchen.update(reducedMotion ? 0 : elapsed, ringing && !reducedMotion);
   kitchen.fadeWalls(camera.position, rig.mode === 'orbit');
 
   const focus = panel.openId ? null : focusedCook();
@@ -225,4 +249,21 @@ renderer.setAnimationLoop((now) => {
 
   renderer.render(scene, camera);
   labels.render(scene, camera);
+
+  if (perf) {
+    perfFrames++;
+    perfCpu += performance.now() - frameStart;
+    const span = performance.now() - perfSince;
+    if (span >= 1000) {
+      const fps = (perfFrames * 1000) / span;
+      const ms = (n: number) => (n / perfFrames).toFixed(2);
+      perf.textContent =
+        `${fps.toFixed(0)} fps · frame ${ms(perfCpu)} ms cpu · cooks ${ms(perfAnim)} ms · ` +
+        `${renderer.info.render.calls} draws · ${cooks.figures} figures`;
+      perfFrames = 0;
+      perfCpu = 0;
+      perfAnim = 0;
+      perfSince = performance.now();
+    }
+  }
 });

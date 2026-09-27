@@ -3,12 +3,16 @@
  * `animate` drives the limbs for a pose; the caller decides position and heading.
  */
 import * as THREE from 'three';
-import type { Pose } from '../logic/cook';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { BELL_PERIOD, blendInto, smoothing, type Carry, type Motion } from '../logic/anim';
 import { palette } from '../palette';
 import { boxGeo, mat, mesh, ownMat } from './materials';
 import { COUNTER_HEIGHT } from './kitchen';
 
-export type Motion = Pose | 'walk';
+export type { Motion };
+
+/** How fast limbs blend into a new pose (1/s): about 0.25 s from one pose to the next. */
+const BLEND_RATE = 12;
 
 /** Per-limb angles in radians. Arms hang down at 0; negative `x` lifts them forward. */
 export interface Limbs {
@@ -90,8 +94,8 @@ export function limbsFor(motion: Motion, t: number, waving: boolean): Limbs {
       break;
     }
     case 'bell': {
-      // Two quick taps every 1.2 s.
-      const c = t % 1.2;
+      // Two quick taps every bell period.
+      const c = t % BELL_PERIOD;
       const tap = c < 0.5 ? Math.abs(Math.sin(c * 2 * Math.PI * 2)) : 0;
       l.rightX = -1.05 - (1 - tap) * 0.35;
       l.rightZ = 0.3;
@@ -118,6 +122,39 @@ export function limbsFor(motion: Motion, t: number, waving: boolean): Limbs {
       l.leftZ = 0.18;
       l.headX = -up * 0.25;
       l.bob = Math.sin(t * 1.2) * 0.01;
+      break;
+    }
+    case 'stretch': {
+      // Mug still in hand: both arms up, lean back, then settle.
+      const up = Math.sin(Math.min(1, (t % 4) / 1.6) * Math.PI);
+      l.rightX = -0.3 - up * 2.4;
+      l.rightZ = -0.2 - up * 0.3;
+      l.leftX = -0.3 - up * 2.4;
+      l.leftZ = 0.2 + up * 0.3;
+      l.headX = -up * 0.35;
+      l.bob = up * 0.03;
+      break;
+    }
+    case 'gaze': {
+      // Mug held low, looking around the patio.
+      l.rightX = -0.8;
+      l.rightZ = 0.25;
+      l.leftZ = 0.18;
+      l.headZ = Math.sin(t * 0.9) * 0.12;
+      l.headX = -0.1 + Math.sin(t * 0.6) * 0.05;
+      l.bob = Math.sin(t * 1.2) * 0.01;
+      break;
+    }
+    case 'help': {
+      // Holds something out towards the chef, bobbing along.
+      const c = (t % 2) / 2;
+      const out = c < 0.5 ? Math.sin(c * 2 * Math.PI) : 0;
+      l.rightX = -0.6 - out * 0.8;
+      l.leftX = -0.6 - out * 0.8;
+      l.rightZ = 0.1;
+      l.leftZ = -0.1;
+      l.headX = 0.1 - out * 0.15;
+      l.bob = Math.abs(Math.sin(t * 4)) * 0.02;
       break;
     }
   }
@@ -170,6 +207,56 @@ const geo = {
   bellDome: new THREE.SphereGeometry(0.085, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2),
 };
 
+/** One material for every baked body part: the palette colours live in the vertices. */
+const bodyMat = new THREE.MeshStandardMaterial({
+  vertexColors: true,
+  flatShading: true,
+  roughness: 0.85,
+  metalness: 0,
+});
+
+type Piece = { geometry: THREE.BufferGeometry; color: number; matrix: THREE.Matrix4 };
+
+function piece(
+  geometry: THREE.BufferGeometry,
+  color: number,
+  [x, y, z]: readonly [number, number, number] = [0, 0, 0],
+  [sx, sy, sz]: readonly [number, number, number] = [1, 1, 1],
+  rotY = 0,
+): Piece {
+  const matrix = new THREE.Matrix4().compose(
+    new THREE.Vector3(x, y, z),
+    new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rotY),
+    new THREE.Vector3(sx, sy, sz),
+  );
+  return { geometry, color, matrix };
+}
+
+const bakedCache = new Map<string, THREE.BufferGeometry>();
+
+/** Merge pieces into one geometry with per-vertex colours. Built once, shared by every cook. */
+function baked(key: string, pieces: () => Piece[]): THREE.BufferGeometry {
+  let g = bakedCache.get(key);
+  if (g) return g;
+  const parts = pieces().map(({ geometry, color, matrix }) => {
+    const p = geometry.index ? geometry.toNonIndexed() : geometry.clone();
+    for (const name of Object.keys(p.attributes)) {
+      if (name !== 'position' && name !== 'normal') p.deleteAttribute(name);
+    }
+    p.applyMatrix4(matrix);
+    const c = new THREE.Color(color);
+    const n = p.attributes.position!.count;
+    const colors = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) colors.set([c.r, c.g, c.b], i * 3);
+    p.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    return p;
+  });
+  g = mergeGeometries(parts)!;
+  for (const p of parts) p.dispose();
+  bakedCache.set(key, g);
+  return g;
+}
+
 export class CookFigure {
   readonly root = new THREE.Group();
   private readonly body = new THREE.Group();
@@ -182,6 +269,8 @@ export class CookFigure {
   private readonly apronMat: THREE.MeshStandardMaterial;
   private readonly bellDome: THREE.Object3D;
   private current: PropName | null = null;
+  /** Limb angles shown now; they blend towards each frame's target so poses never snap. */
+  private readonly limbs: Limbs = { ...REST };
 
   constructor(
     apron: THREE.ColorRepresentation,
@@ -189,70 +278,71 @@ export class CookFigure {
   ) {
     this.apronMat = ownMat(palette.jacket);
     this.apronMat.color.set(apron);
-    const jacket = mat(palette.jacket);
-    const skin = mat(palette.skin);
-    const dark = mat(palette.trousers);
+    const variant = commis ? 'commis' : 'chef';
 
+    // Each rigid part is one baked, vertex-coloured mesh (one draw call) instead of a mesh per
+    // piece, so a figure costs 7 draw calls rather than ~23. Keeps 20 cooks cheap.
     // Legs pivot at the hip.
+    const legGeo = baked('leg', () => [
+      piece(geo.leg, palette.trousers, [0, -0.2, 0]),
+      piece(geo.shoe, palette.trousers, [0, -0.38, 0.04], [1, 0.6, 1.3]),
+    ]);
     for (const [leg, x] of [
       [this.rightLeg, -0.12],
       [this.leftLeg, 0.12],
     ] as const) {
       leg.position.set(x, 0.4, 0);
-      leg.add(mesh(geo.leg, dark, 0, -0.2, 0));
-      const shoe = mesh(geo.shoe, dark, 0, -0.38, 0.04);
-      shoe.scale.set(1, 0.6, 1.3);
-      leg.add(shoe);
+      leg.add(mesh(legGeo, bodyMat));
       this.root.add(leg);
     }
 
-    this.body.add(mesh(geo.torso, jacket, 0, 0.7, 0));
-    this.body.add(mesh(geo.apron, this.apronMat, 0, 0.6, 0.27));
-    this.body.add(mesh(geo.band, this.apronMat, 0, 0.8, 0));
-    for (const [x, y] of [
-      [-0.08, 0.93],
-      [0.08, 0.93],
-      [-0.08, 0.86],
-      [0.08, 0.86],
-    ] as const) {
-      this.body.add(mesh(geo.button, dark, x, y, 0.245));
-    }
+    const torsoGeo = baked('torso', () => [
+      piece(geo.torso, palette.jacket, [0, 0.7, 0]),
+      ...(
+        [
+          [-0.08, 0.93],
+          [0.08, 0.93],
+          [-0.08, 0.86],
+          [0.08, 0.86],
+        ] as const
+      ).map(([x, y]) => piece(geo.button, palette.trousers, [x, y, 0.245])),
+    ]);
+    const apronGeo = baked('apron', () => [
+      piece(geo.apron, palette.jacket, [0, 0.6, 0.27]),
+      piece(geo.band, palette.jacket, [0, 0.8, 0]),
+    ]);
+    this.body.add(mesh(torsoGeo, bodyMat), mesh(apronGeo, this.apronMat));
 
     // Head with a face on the +z side.
     this.head.position.set(0, 1.25, 0);
-    this.head.add(mesh(geo.head, skin, 0, 0, 0));
-    const eyeMat = mat(palette.eye);
-    const blushMat = mat(palette.blush);
-    for (const s of [-1, 1]) {
-      const eye = mesh(geo.eye, eyeMat, s * 0.09, 0.02, 0.235);
-      eye.scale.set(1, 1.3, 0.6);
-      eye.castShadow = false;
-      const blush = mesh(geo.blush, blushMat, s * 0.16, -0.06, 0.225);
-      blush.rotation.y = s * 0.55;
-      blush.castShadow = false;
-      this.head.add(eye, blush);
-    }
-    const hat = mat(palette.hat);
-    if (commis) {
-      const cap = mesh(geo.cap, hat, 0, 0.1, 0);
-      cap.scale.set(1.02, 0.7, 1.02);
-      this.head.add(cap);
-    } else {
-      this.head.add(mesh(geo.hatBand, hat, 0, 0.26, 0));
-      const puff = mesh(geo.hatPuff, hat, 0, 0.46, 0);
-      puff.scale.set(1, 0.85, 1);
-      this.head.add(puff);
-    }
+    const headGeo = baked(`head-${variant}`, () => {
+      const parts = [piece(geo.head, palette.skin)];
+      for (const s of [-1, 1]) {
+        parts.push(piece(geo.eye, palette.eye, [s * 0.09, 0.02, 0.235], [1, 1.3, 0.6]));
+        parts.push(piece(geo.blush, palette.blush, [s * 0.16, -0.06, 0.225], [1, 1, 1], s * 0.55));
+      }
+      if (commis) {
+        parts.push(piece(geo.cap, palette.hat, [0, 0.1, 0], [1.02, 0.7, 1.02]));
+      } else {
+        parts.push(piece(geo.hatBand, palette.hat, [0, 0.26, 0]));
+        parts.push(piece(geo.hatPuff, palette.hat, [0, 0.46, 0], [1, 0.85, 1]));
+      }
+      return parts;
+    });
+    this.head.add(mesh(headGeo, bodyMat));
     this.body.add(this.head);
 
     // Arms pivot at the shoulder; the right hand holds most props.
+    const armGeo = baked('arm', () => [
+      piece(geo.arm, palette.jacket, [0, -0.2, 0]),
+      piece(geo.hand, palette.skin, [0, -0.42, 0]),
+    ]);
     for (const [arm, x] of [
       [this.rightArm, -0.33],
       [this.leftArm, 0.33],
     ] as const) {
       arm.position.set(x, 0.97, 0);
-      arm.add(mesh(geo.arm, jacket, 0, -0.2, 0));
-      arm.add(mesh(geo.hand, skin, 0, -0.42, 0));
+      arm.add(mesh(armGeo, bodyMat));
       this.body.add(arm);
     }
     this.root.add(this.body);
@@ -327,8 +417,10 @@ export class CookFigure {
   }
 
   /** Show the prop for `motion` (none while walking, except a plate being carried). */
-  setProp(motion: Motion, carrying: 'plate' | 'mug' | null): void {
+  setProp(motion: Motion, carrying: Carry): void {
     let want: PropName | null = motion === 'walk' ? carrying : (POSE_PROPS[motion] ?? null);
+    // Idle extras keep the mug in hand.
+    if ((motion === 'stretch' || motion === 'gaze') && carrying === 'mug') want = 'mug';
     // The pass bell only makes sense at chef scale.
     if (want === 'bell' && this.commis) want = null;
     if (want === this.current) return;
@@ -337,17 +429,28 @@ export class CookFigure {
     this.current = want;
   }
 
-  animate(motion: Motion, t: number, waving: boolean): void {
-    const l = limbsFor(motion, t, waving);
-    const walkCarry = motion === 'walk' && this.current === 'plate';
-    this.rightArm.rotation.set(walkCarry ? -1.45 : l.rightX, 0, l.rightZ);
-    this.leftArm.rotation.set(walkCarry ? -1.45 : l.leftX, 0, l.leftZ);
+  /**
+   * Pose the limbs for `motion` at time `t`, blending from the current pose over `dt` seconds.
+   * `dt` of 0 or less snaps straight to the pose (reduced motion, first frame).
+   */
+  animate(motion: Motion, t: number, waving: boolean, dt = 0): void {
+    const target = limbsFor(motion, t, waving);
+    if (motion === 'walk' && this.current === 'plate') {
+      // Carrying the plate out in front with both hands.
+      target.rightX = target.leftX = -1.45;
+      target.rightZ = 0.15;
+      target.leftZ = -0.15;
+    }
+    const l = dt > 0 ? blendInto(this.limbs, target, smoothing(BLEND_RATE, dt)) : target;
+    if (l !== this.limbs) Object.assign(this.limbs, l);
+    this.rightArm.rotation.set(l.rightX, 0, l.rightZ);
+    this.leftArm.rotation.set(l.leftX, 0, l.leftZ);
     this.rightLeg.rotation.x = l.legSwing;
     this.leftLeg.rotation.x = -l.legSwing;
     this.body.position.y = l.bob;
     this.head.rotation.set(l.headX, 0, l.headZ);
     if (this.current === 'bell') {
-      const c = t % 1.2;
+      const c = t % BELL_PERIOD;
       this.bellDome.position.y = 0.025 - (c < 0.5 ? Math.abs(Math.sin(c * 4 * Math.PI)) * 0.01 : 0);
     }
   }

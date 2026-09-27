@@ -35,6 +35,7 @@ export const palette = {
   plate: 0xfdfaf4,
   brass: 0xe0b04a,
   mug: 0x5e8c9c,
+  steam: 0xfff4e6,
   coffee: 0x4a2c1a,
   ticket: 0xfff8ea,
   ticketInk: 0x3b2a1f,

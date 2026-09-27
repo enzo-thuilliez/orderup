@@ -1,6 +1,13 @@
 import type { CookState, ServerMessage } from 'orderup-shared';
 import { describe, expect, it } from 'vitest';
-import { DEMO_LOOP_MS, demoFrame, diffSessions, isDemo } from '../src/demo/script';
+import {
+  DEMO_LOOP_MS,
+  DEMO_MAX_COOKS,
+  demoCount,
+  demoFrame,
+  diffSessions,
+  isDemo,
+} from '../src/demo/script';
 import { applyMessage, initialState } from '../src/net/store';
 
 describe('demoFrame', () => {
@@ -71,5 +78,34 @@ describe('isDemo', () => {
     expect(isDemo('?demo=1&x')).toBe(true);
     expect(isDemo('?x=demo')).toBe(false);
     expect(isDemo('')).toBe(false);
+  });
+});
+
+describe('stress demo (?demo=N)', () => {
+  it('reads the cook count, clamped', () => {
+    expect(demoCount('?demo')).toBe(5);
+    expect(demoCount('?demo=20')).toBe(20);
+    expect(demoCount('?demo=0')).toBe(5);
+    expect(demoCount('?demo=abc')).toBe(5);
+    expect(demoCount('?demo=999')).toBe(DEMO_MAX_COOKS);
+  });
+
+  it('adds shifted copies with unique ids', () => {
+    expect(demoFrame(3_000, 0, 5)).toEqual(demoFrame(3_000, 0));
+    let most = 0;
+    for (let t = 0; t < DEMO_LOOP_MS; t += 250) {
+      const frame = demoFrame(t, 0, 20);
+      most = Math.max(most, frame.length);
+      const ids = frame.flatMap((s) => [s.sessionId, ...s.subagents.map((c) => c.subagentId)]);
+      expect(new Set(ids).size).toBe(ids.length);
+    }
+    expect(most).toBe(20);
+    // Copies are out of step with the original.
+    const states = (t: number) => demoFrame(t, 0, 10).map((s) => s.state);
+    const differ = [0, 3_000, 6_000, 9_000].some((t) => {
+      const [a, , , , , b] = states(t);
+      return a !== b;
+    });
+    expect(differ).toBe(true);
   });
 });
