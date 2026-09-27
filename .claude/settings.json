@@ -16,6 +16,8 @@
       "Bash(git branch:*)",
       "Bash(git push -u origin feat/*)",
       "Bash(git push -u origin fix/*)",
+      "Bash(git push -u origin chore/*)",
+      "Bash(git push -u origin docs/*)",
       "Bash(gh pr create:*)"
     ],
     "deny": [
