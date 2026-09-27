@@ -7,6 +7,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- CLI: installing or removing hooks keeps `settings.json` as it was: key order, indentation,
+  one-line arrays and line endings. The diff shows only OrderUp's entries.
+- CLI: `npm run dev` no longer offers to install hooks into your real `settings.json`.
+
 ### Added
 
 - Monorepo scaffold: `shared`, `server`, `cli` and `web` workspaces building with stub code.
@@ -47,3 +53,5 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   still poses, with no hops, pops, steam or bubble animations.
 - Kitchen (web): `?demo=N` runs the demo with up to 40 cooks, and `?fps` shows frame rate,
   frame and animation time and draw calls. Cook figures are 7 meshes instead of ~23.
+- Dev: `npm run cli:sandbox` runs the CLI with a temporary `HOME`; tests always get one, and a
+  guard fails any test that escapes it.

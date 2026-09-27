@@ -45,6 +45,7 @@ packages/web      orderup-web     Vite + three.js kitchen
 ```sh
 npm install            # also installs git hooks (lint-staged, commitlint)
 npm run dev            # server on :7717 + Vite on :5173
+npm run cli:sandbox -- <flags>   # CLI from source with a temporary HOME
 npm run lint           # eslint
 npm run format         # prettier --write
 npm run format:check   # prettier --check
@@ -70,8 +71,9 @@ Run lint, format:check, typecheck, test and build before proposing a PR. CI runs
 - The observer path makes **no network calls** other than to `127.0.0.1`, **no LLM calls** and
   **no telemetry**.
 - The server binds to `127.0.0.1` only and checks `Host` and `Origin` on HTTP and WebSocket.
-- Never modify `~/.claude/settings.json` without explicit user confirmation. In tests and
-  manual checks, point `HOME` at a temporary directory.
+- Never modify `~/.claude/settings.json` without explicit user confirmation. Tests get a
+  temporary `HOME` from `test/setup.ts` (a guard fails them otherwise); for manual checks use
+  `npm run cli:sandbox`.
 - Hooks installed by OrderUp must never slow down or break Claude Code: short timeout, silent
   failure, exit code 0.
 - No external assets: geometry is procedural, colours come from `web/src/palette.ts`.
