@@ -31,6 +31,43 @@ orderup
 That starts a local server, opens the kitchen in your browser, and offers to install Claude
 Code hooks (only with your confirmation). Requires Node 22.13+.
 
+Without hooks OrderUp still works from your transcripts, but states lag and the bell for
+sessions waiting on you never rings.
+
+## Usage
+
+```text
+orderup [options]
+
+  --port <n>          port for the local server (default 7717)
+  --no-open           don't open the browser
+  --demo              open the kitchen with a scripted demo instead of live sessions
+  --install-hooks     add OrderUp hooks to ~/.claude/settings.json (shows the diff first)
+  --uninstall-hooks   remove OrderUp hooks from ~/.claude/settings.json
+  --doctor            check hooks, their Node, the server and event delivery
+  -h, --help          show this help
+  -v, --version       print the version
+```
+
+- **Browser.** On macOS, Linux and Windows the kitchen opens in your default browser. From
+  WSL it opens in your Windows browser.
+- **Already running?** A second `orderup` just opens the kitchen that's already up.
+- **Custom port.** Hooks remember the port they were installed with. If you use `--port`,
+  install hooks with the same one: `orderup --install-hooks --port 8123`.
+- **Hooks.** Before writing, OrderUp shows the diff of `~/.claude/settings.json` (or
+  `$CLAUDE_CONFIG_DIR/settings.json`) and asks. Your own hooks are kept, the previous file is
+  saved as `settings.json.orderup-bak`, and installing twice changes nothing. Each hook is a
+  one-line Node command that forwards the event to `127.0.0.1` and always exits 0. It gives
+  up within 1.5 s and says nothing when OrderUp isn't running, so Claude Code never waits
+  on it. On Claude Code 2.1.119+ hooks run in the background.
+- **nvm, fnm, volta…** Hooks run the Node you installed them with, by absolute path, so
+  they work even when Claude Code runs them without your shell's PATH. They stay on that
+  Node version: after switching versions, run `orderup --install-hooks` again to update
+  them.
+- **Something off?** `orderup --doctor` checks the hook entries, that their Node still
+  exists, that the kitchen is reachable, when the last hook event arrived, and sends a test
+  event through the installed hook.
+
 ## How it works
 
 1. Claude Code hooks send session events to a server on `127.0.0.1:7717`.
@@ -53,8 +90,9 @@ Details in [SECURITY.md](SECURITY.md).
 npx orderup-cli --uninstall-hooks
 ```
 
-This removes only the hooks OrderUp added to `~/.claude/settings.json`. A backup of your
-original file is kept as `settings.json.orderup-bak`.
+This shows the diff, asks, and removes only the hooks OrderUp added to
+`~/.claude/settings.json`. The file as it was before each OrderUp change is kept as
+`settings.json.orderup-bak`.
 
 ## Contributing
 

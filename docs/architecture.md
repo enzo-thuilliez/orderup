@@ -120,8 +120,76 @@ to `cwd` when inside it), else the first line of `command`, `pattern`, `url`, `q
 - Body: the hook payload as JSON, `content-type: application/json` required (415 otherwise),
   8 MiB max (413).
 - Response: `204 No Content`, even if OrderUp ignores the event.
-- Installed hooks use a short timeout and always exit 0, so a stopped OrderUp never blocks
-  Claude Code.
+- Any well-formed JSON payload, even an ignored event, sets `lastHookAt`.
+
+### `GET /health`
+
+`HealthResponse` in `orderup-shared`: `{ "ok": true, "protocol": 1, "lastHookAt": <epoch ms> | null }`.
+The CLI uses it to detect a running OrderUp and for `--doctor`. Only a timestamp: no
+session data.
+
+- Installed hooks forward the payload here and always exit 0 (see [CLI](#cli)).
+
+## CLI
+
+`orderup` (`packages/cli`) parses flags, then either acts on hooks and exits
+(`--install-hooks`, `--uninstall-hooks`, `--doctor`) or starts the server:
+
+1. Starts the server on `127.0.0.1:<port>` (default 7717), serving the built kitchen:
+   `web/` next to the CLI when bundled, or `packages/web/dist` in the monorepo. If the port
+   is taken by OrderUp (`GET /health`), it opens that kitchen and exits. If something else
+   holds the port, it fails without trying another port (ADR-002).
+2. Opens `/` (or `/?demo` with `--demo`) unless `--no-open`: `open` on macOS, `xdg-open` on
+   Linux, `rundll32 url.dll,FileProtocolHandler` on Windows and from WSL (the Windows browser
+   reaches the WSL server through localhost forwarding).
+3. Outside `--demo`, checks `settings.json`. With no OrderUp hooks it offers to install them
+   in an interactive terminal, otherwise it prints the command. Hooks whose Node binary is
+   gone, hooks for another port, or an incomplete set get a hint to reinstall.
+
+### Hook install (ADR-006, ADR-011)
+
+- File: `$CLAUDE_CONFIG_DIR/settings.json`, default `~/.claude/settings.json`. A symlink is
+  followed, and the file is written atomically with its mode kept.
+- Every change shows a diff and asks (y/N) in a terminal. Without a terminal, the
+  explicit flag is the confirmation. The file as it was before goes to
+  `settings.json.orderup-bak`. Invalid JSON, or a `hooks` value of the wrong shape, is
+  never overwritten.
+- One group `{ "hooks": [ourHook] }` is appended per event in the
+  [hook table](#hook--state). User groups are never edited, except to take out an
+  OrderUp hook someone moved into them.
+- `ourHook` runs the installer's own Node by absolute path (`process.execPath`), never a
+  bare `node` from PATH. Its shape depends on `claude --version`:
+
+  | Claude Code       | `ourHook`                                                                                       |
+  | ----------------- | ----------------------------------------------------------------------------------------------- |
+  | 2.1.139+          | `{ "type": "command", "command": "<node>", "args": ["-e", "/*orderup-hook*/…"], "timeout": 5 }` |
+  | older, or unknown | `{ "type": "command", "command": "'<node>' -e '/*orderup-hook*/…'", "timeout": 5 }`             |
+
+  `"async": true` is added (except for `SessionEnd`) on 2.1.119+. The `/*orderup-hook*/`
+  marker identifies our entries: install first removes them (so it's idempotent and picks
+  up a new port or Node), and uninstall removes only them. If the Node path is inside a
+  version manager's directory (nvm, fnm, volta, asdf, mise, nodenv, n), the installer
+  warns that hooks stay on that version until reinstalled.
+
+- The inline forwarder reads stdin, POSTs it to `127.0.0.1:<port>/hook` with a 1 s socket
+  timeout, and exits 0 with no output on every path. A 1.5 s timer bounds the whole run. It
+  contains no quote characters, so it fits in one pair of single quotes.
+
+### `orderup --doctor`
+
+A plain-text report, one line per check, with level `ok`, `warn` or `FAIL`. Exit code 1 if
+any check fails.
+
+| Check      | What                                                                                                  |
+| ---------- | ----------------------------------------------------------------------------------------------------- |
+| `claude`   | `claude --version` found                                                                              |
+| `hooks`    | OrderUp entries for every event, a single port, the form this Claude Code would get                   |
+| `node`     | each Node path in the entries exists and is executable (a bare `node` is a warning)                   |
+| `server`   | `GET /health` answers on the hooks' port                                                              |
+| `events`   | `lastHookAt` from `/health`: when the last hook payload arrived                                       |
+| `delivery` | runs the installed `PreToolUse` command with an `OrderUpDoctor` event, then checks `lastHookAt` moved |
+
+`OrderUpDoctor` is not a Claude Code event, so the server accepts it and changes no session.
 
 ## Wire protocol
 

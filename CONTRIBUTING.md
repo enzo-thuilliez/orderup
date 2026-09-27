@@ -57,5 +57,9 @@ trust dialog. Deny rules (no force pushes, no pushes to `main`) apply either way
 Never test the hook installer against your real `~/.claude/settings.json`:
 
 ```sh
-HOME=$(mktemp -d) npx tsx --conditions=source packages/cli/src/index.ts --install-hooks
+env -u CLAUDE_CONFIG_DIR HOME=$(mktemp -d) \
+  npx tsx --conditions=source packages/cli/src/index.ts --install-hooks --port 7799
 ```
+
+`CLAUDE_CONFIG_DIR` takes precedence over `HOME`, hence the `env -u`. Use a spare port so a
+kitchen already running on 7717 keeps working.
