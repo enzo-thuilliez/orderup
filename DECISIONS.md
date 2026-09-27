@@ -204,3 +204,27 @@ ones, supersede them instead.
     GitHub `npm` environment.
 - **Consequences:** Two runtime dependencies. A release is a version PR followed by a tag.
   The one-time npm and GitHub setup is in [docs/releasing.md](docs/releasing.md).
+
+## ADR-014: Record the README GIF on a fake clock, encode it in JavaScript
+
+- **Status:** accepted (2026-09-27)
+- **Context:** The README GIF must come from `?demo`, loop cleanly, stay under 5 MB and be
+  re-recordable by anyone. Screen-capturing a real-time render drops or repeats frames
+  depending on the machine, and headless Chromium renders WebGL in software, slowly.
+- **Decision:**
+  - `npm run demo:record` serves the built kitchen with `orderup --demo`, loads it in
+    headless Chromium with Playwright's clock installed and paused, and advances it by one
+    frame interval (50 ms, 20 fps) per screenshot. `requestAnimationFrame` is routed through
+    the fake `setTimeout` at that interval, so the page renders once per kept frame. CSS
+    animations (bell, bubbles) run on the compositor's real clock, so the recorder pauses
+    each one and sets its `currentTime` from fake time every frame. One
+    15 s loop plays first so the cooks are where the loop leaves them, then one loop is
+    captured.
+  - Encoding uses `gifenc` and `pngjs` (MIT, pure JavaScript) rather than ffmpeg or gifski:
+    no system binaries to install on any OS. One global palette avoids colour flicker, and
+    pixels within a small colour tolerance of what is already shown stay transparent.
+  - The scene has no randomness (ticket sway is seeded by session id). With the above, two
+    recordings of the same build are byte-identical (checked by SHA-256).
+- **Consequences:** A recording takes about 2.5 minutes. Playwright and its Chromium are
+  dev-only (`npx playwright install --only-shell chromium`). gifenc can't crop frames to
+  the changed region, so size is managed with fps, viewport and tolerance flags.

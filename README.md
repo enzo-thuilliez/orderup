@@ -5,8 +5,9 @@
 [![CI](https://github.com/enzo-thuilliez/orderup/actions/workflows/ci.yml/badge.svg)](https://github.com/enzo-thuilliez/orderup/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-orange.svg)](LICENSE)
 
-<!-- TODO: demo GIF recorded from ?demo mode -->
-<p align="center"><em>Demo GIF coming soon.</em></p>
+<p align="center">
+  <img src="docs/assets/demo.gif" width="800" alt="The OrderUp kitchen: cooks at their stations, one ringing the bell at the pass, one plating up, one on a coffee break out back, commis cooks beside their chef and token tickets on the rail.">
+</p>
 
 Every Claude Code session on your machine becomes a cook. Working sessions cook at their
 station, sessions waiting for you ring the bell at the pass, finished ones plate up with an

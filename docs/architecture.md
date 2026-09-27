@@ -247,6 +247,10 @@ checks on HTTP and WebSocket, and a per-launch secret before the command channel
   commis and one crew cook through every state, looping every 15 s. It goes through the same
   reducer as live data. `?demo=N` (up to 40) adds time-shifted copies for load testing, and
   `?fps` shows frame rate, CPU time per frame and in cook animation, and draw calls.
+  Nothing in the scene is random (ticket sway is seeded by session id), so a given time
+  renders the same frame every run. `npm run demo:record` (`scripts/record-demo.mjs`)
+  relies on that to record `docs/assets/demo.gif`: headless Chromium on Playwright's paused
+  fake clock, one warm-up loop, then one loop captured frame by frame (ADR-014).
 
 ## Web controls
 

@@ -17,15 +17,6 @@ First release on npm: `npx orderup-cli`.
   kitchen bundled together, with `ws` and `jsonc-parser` as its only dependencies), checked
   on Linux, macOS and Windows with Node 22.13 and 24.
 - Releases are published from GitHub Actions with npm provenance.
-
-### Fixed
-
-- CLI: installing or removing hooks keeps `settings.json` as it was: key order, indentation,
-  one-line arrays and line endings. The diff shows only OrderUp's entries.
-- CLI: `npm run dev` no longer offers to install hooks into your real `settings.json`.
-
-### Added
-
 - Monorepo scaffold: `shared`, `server`, `cli` and `web` workspaces building with stub code.
 - Wire protocol types for observed and crew cooks, with a reserved command channel.
 - Tooling: TypeScript, ESLint, Prettier, Vitest, lint-staged, commitlint, GitHub Actions CI.
@@ -66,3 +57,13 @@ First release on npm: `npx orderup-cli`.
   frame and animation time and draw calls. Cook figures are 7 meshes instead of ~23.
 - Dev: `npm run cli:sandbox` runs the CLI with a temporary `HOME`; tests always get one, and a
   guard fails any test that escapes it.
+- Kitchen (web): `?demo` renders the same frames on every run (ticket sway no longer
+  random), so it can be recorded.
+- README: demo GIF of the `?demo` kitchen, recorded with `npm run demo:record`
+  (Playwright on a fake clock, 15 s seamless loop).
+
+### Fixed
+
+- CLI: installing or removing hooks keeps `settings.json` as it was: key order, indentation,
+  one-line arrays and line endings. The diff shows only OrderUp's entries.
+- CLI: `npm run dev` no longer offers to install hooks into your real `settings.json`.
