@@ -67,7 +67,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      - run: npm pack -w orderup-cli --pack-destination "$RUNNER_TEMP/pack"
+      - run: mkdir -p "$RUNNER_TEMP/pack" && npm pack -w orderup-cli --pack-destination "$RUNNER_TEMP/pack"
       - name: Smoke-test the packed orderup-cli
         run: node scripts/smoke-pack.mjs "$RUNNER_TEMP"/pack/orderup-cli-*.tgz
 
