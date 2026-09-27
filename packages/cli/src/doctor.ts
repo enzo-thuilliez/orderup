@@ -4,7 +4,7 @@ import path from 'node:path';
 import { DEFAULT_PORT, type HealthResponse } from 'orderup-shared';
 import { hookOptions } from './hooks.js';
 import { versionManagerOf } from './node-path.js';
-import { hookStatus, ourHooks, readSettings, withOurHooks } from './settings.js';
+import { hasOurHooks, hookStatus, ourHooks, readSettings } from './settings.js';
 
 export type Level = 'ok' | 'warn' | 'FAIL';
 
@@ -168,8 +168,7 @@ export async function runDoctor(options: {
         `hooks post to ports ${status.ports.join(', ')}. ${REINSTALL} --port <n>`,
       );
     } else if (status.complete && status.nodes.length === 1 && port !== undefined && node) {
-      const expected = withOurHooks(settings, hookOptions(port, claude, node));
-      if (JSON.stringify(expected) !== JSON.stringify(settings)) {
+      if (!hasOurHooks(settings, hookOptions(port, claude, node))) {
         add('hooks', 'warn', `not in the form this Claude Code would get. ${REINSTALL}`);
       }
     }

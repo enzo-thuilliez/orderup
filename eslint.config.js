@@ -16,6 +16,8 @@ export default defineConfig(
     files: [
       '*.{js,ts}',
       'packages/{shared,server,cli}/**/*.{js,ts}',
+      'scripts/**/*.{js,mjs}',
+      'test/**/*.ts',
       'packages/web/vite.config.ts',
     ],
     languageOptions: { globals: globals.node },

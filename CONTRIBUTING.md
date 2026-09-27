@@ -54,12 +54,19 @@ trust dialog. Deny rules (no force pushes, no pushes to `main`) apply either way
 
 ## Testing hooks safely
 
-Never test the hook installer against your real `~/.claude/settings.json`:
+Never test the hook installer against your real `~/.claude/settings.json`. Run the CLI
+from source in a sandbox instead: a temporary `HOME`, no `CLAUDE_CONFIG_DIR`.
 
 ```sh
-env -u CLAUDE_CONFIG_DIR HOME=$(mktemp -d) \
-  npx tsx --conditions=source packages/cli/src/index.ts --install-hooks --port 7799
+npm run cli:sandbox -- --install-hooks --port 7799
+ORDERUP_SANDBOX_HOME=/tmp/… npm run cli:sandbox -- --doctor --port 7799   # same sandbox again
 ```
 
-`CLAUDE_CONFIG_DIR` takes precedence over `HOME`, hence the `env -u`. Use a spare port so a
-kitchen already running on 7717 keeps working.
+Use a spare port so a kitchen already running on 7717 keeps working.
+
+- Tests get a temporary `HOME` automatically (`test/setup.ts`). A guard fails any test that
+  runs with `HOME` or `CLAUDE_CONFIG_DIR` outside the system temp directory.
+- `npm run dev` never offers to install hooks.
+- When a coding agent is working in your checkout, `dist/` may hold half-finished code.
+  Review and try its branches in a separate worktree
+  (`git worktree add ../orderup-review <branch>`), not in the checkout it is editing.

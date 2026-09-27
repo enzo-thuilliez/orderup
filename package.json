@@ -21,6 +21,7 @@
     "dev": "concurrently -k -n api,web -c yellow,cyan \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "tsx watch --conditions=source packages/cli/src/index.ts --no-open --dev",
     "dev:web": "npm run dev -w orderup-web",
+    "cli:sandbox": "node scripts/cli-sandbox.mjs",
     "build": "tsc -b && npm run build -w orderup-web",
     "typecheck": "tsc -b && tsc -p packages/web",
     "test": "vitest run",

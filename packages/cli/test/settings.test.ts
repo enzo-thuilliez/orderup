@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { forwarderHook, HOOK_MARKER } from '../src/forwarder.js';
 import {
-  formatSettings,
+  hasOurHooks,
   HOOK_EVENTS,
   hookStatus,
   SettingsError,
@@ -142,10 +142,35 @@ describe('hookStatus', () => {
   });
 });
 
-describe('formatSettings', () => {
-  it('keeps the original indentation', () => {
-    expect(formatSettings({ a: 1 }, '{\n    "b": 2\n}\n')).toBe('{\n    "a": 1\n}\n');
-    expect(formatSettings({ a: 1 }, '{\n\t"b": 2\n}\n')).toBe('{\n\t"a": 1\n}\n');
-    expect(formatSettings({ a: 1 }, null)).toBe('{\n  "a": 1\n}\n');
+describe('key order', () => {
+  const ordered = {
+    theme: 'dark',
+    hooks: { Stop: [{ hooks: [userHook] }], PreCompact: [] },
+    model: 'opus',
+  };
+
+  it('keeps "hooks" and every event where they were', () => {
+    const next = withOurHooks(ordered, opts);
+    expect(Object.keys(next)).toEqual(['theme', 'hooks', 'model']);
+    expect(Object.keys(next.hooks as object).slice(0, 2)).toEqual(['Stop', 'PreCompact']);
+    expect(Object.keys(withoutOurHooks(next))).toEqual(['theme', 'hooks', 'model']);
+  });
+
+  it('keeps "hooks" in place when it held only OrderUp hooks', () => {
+    const onlyOurs = { theme: 'dark', hooks: withOurHooks({}, opts).hooks, model: 'opus' };
+    const updated = withOurHooks(onlyOurs, { ...opts, port: 8123 });
+    expect(Object.keys(updated)).toEqual(['theme', 'hooks', 'model']);
+    expect(Object.keys(updated.hooks as object)).toEqual([...HOOK_EVENTS]);
+    expect(withoutOurHooks(onlyOurs)).toEqual({ theme: 'dark', model: 'opus' });
+  });
+});
+
+describe('hasOurHooks', () => {
+  it('is true only for exactly the hooks these options would install', () => {
+    const installed = withOurHooks(userSettings, opts);
+    expect(hasOurHooks(installed, opts)).toBe(true);
+    expect(hasOurHooks(installed, { ...opts, port: 8123 })).toBe(false);
+    expect(hasOurHooks(installed, { ...opts, async: false })).toBe(false);
+    expect(hasOurHooks(userSettings, opts)).toBe(false);
   });
 });
