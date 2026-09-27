@@ -21,3 +21,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Kitchen (web): orbit overview and first-person walk (Tab), wave (E), cook panel (F or click)
   with live activity, and a crew chat placeholder.
 - Kitchen (web): reconnecting WebSocket client and a `?demo` mode that runs without a server.
+- CLI: `orderup` serves the built kitchen on `127.0.0.1:7717` and opens it in the browser,
+  including the Windows browser from WSL. Flags: `--port`, `--no-open`, `--demo`,
+  `--install-hooks`, `--uninstall-hooks`, `--help`, `--version`. A second `orderup` opens
+  the running kitchen instead of failing.
+- CLI: Claude Code hook installer. Shows the diff of `settings.json` and asks first, keeps a
+  `settings.json.orderup-bak` backup, merges with your hooks, is idempotent, and uninstall
+  removes only OrderUp's entries. Offered on start when hooks are missing, never automatic.
+- CLI: hooks never slow Claude Code down. A tiny Node forwarder always exits 0, gives up
+  after 1.5 s, stays silent when OrderUp is down, and runs in the background on Claude Code
+  2.1.119+.

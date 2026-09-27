@@ -120,8 +120,42 @@ to `cwd` when inside it), else the first line of `command`, `pattern`, `url`, `q
 - Body: the hook payload as JSON, `content-type: application/json` required (415 otherwise),
   8 MiB max (413).
 - Response: `204 No Content`, even if OrderUp ignores the event.
-- Installed hooks use a short timeout and always exit 0, so a stopped OrderUp never blocks
-  Claude Code.
+- Installed hooks forward the payload here and always exit 0 (see [CLI](#cli)).
+
+## CLI
+
+`orderup` (`packages/cli`) parses flags, then either edits hooks and exits
+(`--install-hooks`, `--uninstall-hooks`) or starts the server:
+
+1. Starts the server on `127.0.0.1:<port>` (default 7717), serving the built kitchen:
+   `web/` next to the CLI when bundled, or `packages/web/dist` in the monorepo. If the port
+   is taken by OrderUp (`GET /health`), it opens that kitchen and exits. If something else
+   holds the port, it fails without trying another port (ADR-002).
+2. Opens `/` (or `/?demo` with `--demo`) unless `--no-open`: `open` on macOS, `xdg-open` on
+   Linux, `rundll32 url.dll,FileProtocolHandler` on Windows and from WSL (the Windows browser
+   reaches the WSL server through localhost forwarding).
+3. Outside `--demo`, checks `settings.json`. With no OrderUp hooks it offers to install them
+   in an interactive terminal, otherwise it prints the command. Hooks for another port or
+   an incomplete set get a hint to reinstall.
+
+### Hook install (ADR-006, ADR-011)
+
+- File: `$CLAUDE_CONFIG_DIR/settings.json`, default `~/.claude/settings.json`. A symlink is
+  followed, and the file is written atomically with its mode kept.
+- Every change shows a diff and asks (y/N) in a terminal. Without a terminal, the
+  explicit flag is the confirmation. The file as it was before goes to
+  `settings.json.orderup-bak`. Invalid JSON, or a `hooks` value of the wrong shape, is
+  never overwritten.
+- One group `{ "hooks": [ourHook] }` is appended per event in the
+  [hook table](#hook--state). User groups are never edited, except to take out an
+  OrderUp hook someone moved into them.
+- `ourHook` is `{ "type": "command", "command": "node -e '/*orderup-hook*/…'", "timeout": 5 }`,
+  plus `"async": true` (except `SessionEnd`) on Claude Code 2.1.119 or later, detected with
+  `claude --version`. The `/*orderup-hook*/` marker identifies our entries: install first
+  removes them (so it's idempotent and picks up a new port), uninstall removes only them.
+- The inline forwarder reads stdin, POSTs it to `127.0.0.1:<port>/hook` with a 1 s socket
+  timeout, and exits 0 with no output on every path. A 1.5 s timer bounds the whole run. It
+  contains no quote characters, so the command works under `sh`, Git Bash and PowerShell.
 
 ## Wire protocol
 

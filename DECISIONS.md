@@ -124,3 +124,27 @@ ones, supersede them instead.
 - **Consequences:** Labels stay crisp and cheap to update, but show through walls in walk
   mode. Placement and animation rules are pure functions under `web/src/logic` and are
   unit-tested without a browser.
+
+## ADR-011: Hooks are a silent Node forwarder, not native `http` hooks
+
+- **Status:** accepted (2026-09-27)
+- **Context:** Claude Code has native `http` hooks since 2.1.63, which would POST straight
+  to the server. But for an `http` hook, a refused connection is a non-blocking error, and
+  Claude Code shows a "hook error" notice in the transcript for it. OrderUp is often not
+  running, so users would see a notice on every tool call. A `command` hook that exits 0
+  with empty output is silent. Hooks must never slow down or clutter Claude Code (AGENTS.md).
+- **Decision:**
+  - Install `command` hooks running `node -e` with a tiny inline forwarder (no file on
+    disk to go missing when the npx cache is cleared). It exits 0 with no output in every
+    case, gives up after 1 s on the socket and 1.5 s overall, and the hook `timeout` is 5 s.
+  - Add `"async": true` when `claude --version` is 2.1.119 or later: background hooks cost
+    Claude Code no latency, and since that version their completion is silent and writes no
+    empty transcript entries. `SessionEnd` stays synchronous so it isn't cancelled on exit.
+    When the version is unknown, hooks stay synchronous (about 50 ms of Node startup each).
+  - Tag entries with a `/*orderup-hook*/` marker inside the command, because extra keys in
+    hook entries might fail Claude Code's settings validation.
+- **Consequences:** Hooks need `node` on the `PATH` Claude Code runs hooks with. Background
+  hooks can arrive out of order, but only within a burst: `Pre`/`PostToolUse` of a fast tool
+  may swap, which the reducer maps to the same `working` state. A turn's `Stop` follows a
+  model response, far later than a forwarder's ~50 ms, so it doesn't overtake them. Revisit
+  `http` hooks if Claude Code ever lets them fail silently.
