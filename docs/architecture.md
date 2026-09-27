@@ -136,7 +136,7 @@ session data.
 (`--install-hooks`, `--uninstall-hooks`, `--doctor`) or starts the server:
 
 1. Starts the server on `127.0.0.1:<port>` (default 7717), serving the built kitchen:
-   `web/` next to the CLI when bundled, or `packages/web/dist` in the monorepo. If the port
+   `dist/web/` next to the bundled CLI in the npm package, or `packages/web/dist` in the monorepo. If the port
    is taken by OrderUp (`GET /health`), it opens that kitchen and exits. If something else
    holds the port, it fails without trying another port (ADR-002).
 2. Opens `/` (or `/?demo` with `--demo`) unless `--no-open`: `open` on macOS, `xdg-open` on

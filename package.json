@@ -22,7 +22,8 @@
     "dev:api": "tsx watch --conditions=source packages/cli/src/index.ts --no-open --dev",
     "dev:web": "npm run dev -w orderup-web",
     "cli:sandbox": "node scripts/cli-sandbox.mjs",
-    "build": "tsc -b && npm run build -w orderup-web",
+    "build": "tsc -b && npm run build -w orderup-web && npm run build -w orderup-cli",
+    "smoke": "node scripts/smoke-pack.mjs",
     "typecheck": "tsc -b && tsc -p packages/web",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -43,11 +44,13 @@
     "*.{json,md,yml,yaml,css,html}": "prettier --write"
   },
   "devDependencies": {
+    "@changesets/cli": "^3.0.3",
     "@commitlint/cli": "^21.2.3",
     "@commitlint/config-conventional": "^21.2.3",
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.6.2",
     "concurrently": "^10.0.5",
+    "esbuild": "^0.28.2",
     "eslint": "^10.11.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.12.0",
