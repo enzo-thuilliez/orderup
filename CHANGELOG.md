@@ -7,6 +7,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-27
+
+First release on npm: `npx orderup-cli`.
+
+### Added
+
+- Package: `orderup-cli` ships as one self-contained package (the CLI, server and built
+  kitchen bundled together, with `ws` and `jsonc-parser` as its only dependencies), checked
+  on Linux, macOS and Windows with Node 22.13 and 24.
+- Releases are published from GitHub Actions with npm provenance.
+
 ### Fixed
 
 - CLI: installing or removing hooks keeps `settings.json` as it was: key order, indentation,

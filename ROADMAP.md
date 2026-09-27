@@ -11,7 +11,7 @@ and a README GIF.
 Persistent crew cooks run by the server through the Claude Agent SDK. Walk up, press F and
 chat with them. Local SQLite for crew state and history. Command channel secured.
 
-## V2: Scheduled crew and npm publish
+## V2: Scheduled crew
 
 Crew roles on schedules that pick up order tickets (issues) and build OrderUp through PRs.
-`orderup-cli` published to npm as a single bundled package.
+(npm publishing as a single bundled package landed early, in 0.1.0: ADR-013.)
