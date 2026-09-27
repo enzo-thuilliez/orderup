@@ -150,6 +150,11 @@ session data.
 
 - File: `$CLAUDE_CONFIG_DIR/settings.json`, default `~/.claude/settings.json`. A symlink is
   followed, and the file is written atomically with its mode kept.
+- The file is edited as text (ADR-012): only OrderUp's entries change. Keys keep their
+  order, and the file keeps its indentation, one-line arrays and line endings. An existing
+  OrderUp group is replaced where it is; new groups go after the user's, and new keys
+  (`hooks`, an event) go last. Every edit is checked against the object model before
+  writing, and a mismatch aborts without touching the file.
 - Every change shows a diff and asks (y/N) in a terminal. Without a terminal, the
   explicit flag is the confirmation. The file as it was before goes to
   `settings.json.orderup-bak`. Invalid JSON, or a `hooks` value of the wrong shape, is

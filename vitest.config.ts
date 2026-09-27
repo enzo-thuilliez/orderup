@@ -13,7 +13,9 @@ export default defineConfig({
     },
   },
   test: {
-    include: ['packages/*/test/**/*.test.ts'],
+    include: ['packages/*/test/**/*.test.ts', 'test/**/*.test.ts'],
     environment: 'node',
+    // Every test file runs with a temporary HOME and fails if it escapes it (test/setup.ts).
+    setupFiles: ['test/setup.ts'],
   },
 });

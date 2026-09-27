@@ -1,14 +1,18 @@
 import { execFile } from 'node:child_process';
+import { isDeepStrictEqual } from 'node:util';
 import { formatDiff } from './diff.js';
+import { addOurHooksText, removeOurHooksText } from './edit.js';
 import { versionManagerWarning } from './node-path.js';
 import {
   BACKUP_SUFFIX,
-  type HookOptions,
-  formatSettings,
+  hasOurHooks,
+  ourHooks,
   readSettings,
+  SettingsError,
   withOurHooks,
   withoutOurHooks,
   writeSettings,
+  type HookOptions,
 } from './settings.js';
 
 /** First Claude Code release where background hook completions are silent (ADR-011). */
@@ -69,17 +73,34 @@ export function hookOptions(port: number, claude: string | null, node: string): 
   };
 }
 
+type Json = Record<string, unknown>;
+
+interface Change {
+  /** Nothing to do: the file already is as it should be. */
+  done(settings: Json): boolean;
+  /** The resulting settings, which also validates the file's shape (SettingsError). */
+  model(settings: Json): Json;
+  /** The same change made on the text, keeping everything else byte for byte. */
+  text(text: string): string;
+}
+
 async function applyChange(
   file: string,
-  change: (settings: Record<string, unknown>) => Record<string, unknown>,
+  change: Change,
   question: string,
   io: Io,
 ): Promise<'written' | 'unchanged' | 'cancelled'> {
   const current = await readSettings(file);
-  const next = change(current.settings);
+  if (change.done(current.settings)) return 'unchanged';
+  const expected = change.model(current.settings);
   const before = current.text ?? '';
-  const after = formatSettings(next, current.text);
-  if (next === current.settings || after === before) return 'unchanged';
+  const after =
+    before.trim() === '' ? `${JSON.stringify(expected, null, 2)}\n` : change.text(before);
+  // Safety net: never write a text edit that disagrees with the model.
+  if (!isDeepStrictEqual(JSON.parse(after), expected)) {
+    throw new SettingsError(`couldn't edit ${file} safely; it was left untouched`);
+  }
+  if (after === before) return 'unchanged';
 
   io.out(`\n${file}${current.text === null ? ' (new file)' : ''}\n`);
   io.out(formatDiff(before, after, { color: io.color }));
@@ -100,9 +121,14 @@ export async function installHooks(options: {
   io: Io;
 }): Promise<InstallResult> {
   const { file, port, claude, node = process.execPath, io } = options;
+  const wanted = hookOptions(port, claude, node);
   const result = await applyChange(
     file,
-    (settings) => withOurHooks(settings, hookOptions(port, claude, node)),
+    {
+      done: (settings) => hasOurHooks(settings, wanted),
+      model: (settings) => withOurHooks(settings, wanted),
+      text: (text) => addOurHooksText(text, wanted),
+    },
     'Write these hooks to settings.json? [y/N] ',
     io,
   );
@@ -120,7 +146,11 @@ export async function uninstallHooks(options: { file: string; io: Io }): Promise
   const { file, io } = options;
   const result = await applyChange(
     file,
-    withoutOurHooks,
+    {
+      done: (settings) => ourHooks(settings).length === 0,
+      model: withoutOurHooks,
+      text: removeOurHooksText,
+    },
     'Remove OrderUp hooks from settings.json? [y/N] ',
     io,
   );

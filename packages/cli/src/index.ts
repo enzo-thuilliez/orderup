@@ -166,7 +166,9 @@ async function main(argv: string[]): Promise<void> {
   process.once('SIGTERM', shutdown);
 
   await open(url, options);
-  if (!options.demo) await checkHooks(options, io, file);
+  // `npm run dev` (--dev) never offers to write the developer's real settings.json.
+  if (!options.demo)
+    await checkHooks(options, options.dev ? { ...io, confirm: undefined } : io, file);
   console.log('Press Ctrl+C to close the kitchen.');
 }
 

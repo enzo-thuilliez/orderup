@@ -162,3 +162,22 @@ ones, supersede them instead.
     may swap, which the reducer maps to the same `working` state. A turn's `Stop` follows a
     model response, far later than a forwarder's ~50 ms, so it doesn't overtake them. Revisit
     `http` hooks if Claude Code ever lets them fail silently.
+
+## ADR-012: Edit settings.json as text
+
+- **Status:** accepted (2026-09-27)
+- **Context:** Re-serializing `settings.json` with `JSON.stringify` moved `hooks` to the end
+  and re-laid out the user's one-line arrays. The diff we show then held lines we never
+  meant to change, which undermines the point of asking (ADR-006).
+- **Decision:**
+  - Compute changes on the parsed object (`withOurHooks`, `withoutOurHooks`, both
+    order-preserving). Apply them to the text with minimal edits: `jsonc-parser` (Microsoft,
+    MIT, no dependencies) for insertions and in-place replacement, plus our own removal.
+    jsonc-parser's removal miscounts by one character in one-line arrays.
+  - New content follows its surroundings: the file's indentation and line endings, or a
+    single line inside a one-line container.
+  - Before writing, the edited text must parse to exactly the object model's result.
+    Otherwise nothing is written.
+- **Consequences:** One runtime dependency for the CLI. Its ESM build doesn't load in Node,
+  so it's imported through its CommonJS entry. Appending after the user's last key still
+  adds a comma to that line, which JSON requires.

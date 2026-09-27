@@ -10,6 +10,7 @@ import {
 } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import {
   forwarderHook,
   forwarderNode,
@@ -73,7 +74,8 @@ function isObject(value: unknown): value is Json {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function ourHook(event: string, { async, ...forwarder }: HookOptions): Json {
+/** The hook entry OrderUp installs for one event. */
+export function ourHookEntry(event: string, { async, ...forwarder }: HookOptions): Json {
   return {
     type: 'command',
     ...forwarderHook(forwarder),
@@ -132,43 +134,71 @@ export function hookStatus(settings: Json): HookStatus {
   };
 }
 
-/** Removes exactly OrderUp's hooks, and only the containers that removal left empty. */
-export function withoutOurHooks(settings: Json): Json {
-  const hooks = hooksOf(settings);
-  if (!hooks) return settings;
-  const nextHooks: Record<string, unknown[]> = {};
+/**
+ * Takes OrderUp's hooks out of each event, keeping every key where it was. Events emptied
+ * by that stay (as `[]`) and are reported, so callers decide whether to drop or refill them.
+ */
+function stripOurs(hooks: Record<string, unknown[]>) {
+  const next: Record<string, unknown[]> = {};
+  const emptied = new Set<string>();
   let changed = false;
   for (const [event, groups] of Object.entries(hooks)) {
-    const nextGroups: unknown[] = [];
+    const kept: unknown[] = [];
     let eventChanged = false;
     for (const group of groups) {
       if (isObject(group) && Array.isArray(group.hooks) && group.hooks.some(isOurs)) {
         eventChanged = true;
-        const kept = group.hooks.filter((hook) => !isOurs(hook));
-        if (kept.length > 0) nextGroups.push({ ...group, hooks: kept });
+        const rest = group.hooks.filter((hook) => !isOurs(hook));
+        if (rest.length > 0) kept.push({ ...group, hooks: rest });
       } else {
-        nextGroups.push(group);
+        kept.push(group);
       }
     }
     changed ||= eventChanged;
-    if (!eventChanged || nextGroups.length > 0) nextHooks[event] = nextGroups;
+    if (eventChanged && kept.length === 0) emptied.add(event);
+    next[event] = kept;
   }
+  return { next, emptied, changed };
+}
+
+/** Removes exactly OrderUp's hooks, and only the containers that removal left empty. */
+export function withoutOurHooks(settings: Json): Json {
+  const hooks = hooksOf(settings);
+  if (!hooks) return settings;
+  const { next, emptied, changed } = stripOurs(hooks);
   if (!changed) return settings;
+  for (const event of emptied) delete next[event];
+  if (Object.keys(next).length > 0) return { ...settings, hooks: next };
   const { hooks: _hooks, ...rest } = settings;
-  return Object.keys(nextHooks).length > 0 ? { ...settings, hooks: nextHooks } : rest;
+  return rest;
 }
 
 /**
- * Adds OrderUp's hooks next to the user's own, in a group of their own per event. Existing
- * OrderUp hooks are replaced, so installing twice (or with a new port) never duplicates them.
+ * Adds OrderUp's hooks after the user's own, one group per event. Existing OrderUp hooks are
+ * replaced where they are, so keys keep their order and installing twice changes nothing.
  */
 export function withOurHooks(settings: Json, options: HookOptions): Json {
-  const base = withoutOurHooks(settings);
-  const hooks = { ...(hooksOf(base) ?? {}) };
+  const { next, emptied } = stripOurs(hooksOf(settings) ?? {});
   for (const event of HOOK_EVENTS) {
-    hooks[event] = [...(hooks[event] ?? []), { hooks: [ourHook(event, options)] }];
+    next[event] = [...(next[event] ?? []), { hooks: [ourHookEntry(event, options)] }];
+    emptied.delete(event);
   }
-  return { ...base, hooks };
+  for (const event of emptied) delete next[event];
+  // Spreading keeps "hooks" at its original position when it exists.
+  return { ...settings, hooks: next };
+}
+
+/** Are exactly the hooks `options` describe installed, one per event? */
+export function hasOurHooks(settings: Json, options: HookOptions): boolean {
+  const found = ourHooks(settings);
+  return (
+    found.length === HOOK_EVENTS.length &&
+    HOOK_EVENTS.every((event) =>
+      found.some(
+        (f) => f.event === event && isDeepStrictEqual(f.hook, ourHookEntry(event, options)),
+      ),
+    )
+  );
 }
 
 export interface SettingsFile {
@@ -196,12 +226,6 @@ export async function readSettings(file: string): Promise<SettingsFile> {
   }
   if (!isObject(settings)) throw new SettingsError(`${file} does not contain a JSON object`);
   return { path: file, text, settings };
-}
-
-/** Serializes settings keeping the file's indentation (two spaces by default). */
-export function formatSettings(settings: Json, original: string | null): string {
-  const indent = original ? /^[ \t]+(?=")/m.exec(original)?.[0] : undefined;
-  return `${JSON.stringify(settings, null, indent ?? 2)}\n`;
 }
 
 /**
