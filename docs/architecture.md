@@ -223,20 +223,30 @@ checks on HTTP and WebSocket, and a per-launch secret before the command channel
   the pass and its spot at the patio coffee table. Past ten cooks, slots wrap with a small offset.
   Cooks walk between spots through the island gaps and the back door (`logic/layout.ts`).
 
-| State     | Where           | Pose                                                                                  | Bubble                       |
-| --------- | --------------- | ------------------------------------------------------------------------------------- | ---------------------------- |
-| `working` | Own station     | By tool: chop (Edit/Write), stir (Bash), taste (Read/Grep), read (Web), direct (Task) | `Tool · file or command`     |
-| `waiting` | The pass        | Rings a bell; the pass bell rings too                                                 | "Chef! Need you at the pass" |
-| `done`    | The pass        | Holds up a plate                                                                      | "Order up!"                  |
-| `idle`    | Patio, out back | Sips coffee                                                                           | none                         |
+| State     | Where           | Animation                                                                                                 | Bubble                               |
+| --------- | --------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `working` | Own station     | By tool: chop (Edit/Write), stir (Bash), taste (Read/Grep), read (Web), direct (Task). Steam when cooking | `Tool · file or command`             |
+| `waiting` | The pass        | Rings the bell and bounces with each ring; the pass bell rings too                                        | "!" and "Chef! Need you at the pass" |
+| `done`    | The pass        | Carries the plate there, hops and holds it up                                                             | "Order up!" pops on arrival          |
+| `idle`    | Patio, out back | Sips coffee, now and then stretches or looks around; rhythm and order differ per cook                     | none                                 |
 
 - Cooks present when the page loads start at their spot; later ones walk in through the back
-  door, and removed sessions walk out through it.
-- Commis (subagents) stand beside their chef at 0.68 scale, with their own pose and bubble.
+  door, and removed sessions walk out through it. Between states cooks walk, and limb poses
+  blend over about a quarter second.
+- The state → animation mapping and its transitions are pure (`logic/anim.ts`): `planFor` picks
+  the motion, prop, steam, "!" and hop; `stepTrack` stamps arrival at a spot and fires the
+  one-shot cues ("Order up!", first ring).
+- Commis (subagents) pop in beside their chef at 0.68 scale, work with their own pose and
+  bubble, help or mirror the chef otherwise, and wave before shrinking away.
+- `prefers-reduced-motion`: cooks and commis appear at their spot without walking or popping,
+  poses hold still, no hops, steam or CSS bubble animations; stove flames and the bell stop.
+- Figures bake each rigid part into one vertex-coloured mesh (7 meshes per cook instead of ~23) and all
+  steam is one instanced mesh.
 - Each session has a ticket on the rail: name, state and total tokens.
 - **Demo.** `?demo` replaces the WebSocket with a scripted feed (`demo/script.ts`): five cooks,
   commis and one crew cook through every state, looping every 15 s. It goes through the same
-  reducer as live data.
+  reducer as live data. `?demo=N` (up to 40) adds time-shifted copies for load testing, and
+  `?fps` shows frame rate, CPU time per frame and in cook animation, and draw calls.
 
 ## Web controls
 

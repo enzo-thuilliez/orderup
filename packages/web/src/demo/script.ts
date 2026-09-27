@@ -163,47 +163,67 @@ const SCRIPT: readonly CookScript[] = [
 /** Tokens only move in steps, so a working cook sends a few upserts per second, not one per tick. */
 const TOKEN_STEP_MS = 500;
 
-/** Sessions at `t` ms into the loop. `base` is the epoch ms at which this loop started. */
-export function demoFrame(t: number, base = 0): SessionView[] {
-  const lt = ((t % DEMO_LOOP_MS) + DEMO_LOOP_MS) % DEMO_LOOP_MS;
+/** Most cooks `?demo=N` will put in the kitchen. */
+export const DEMO_MAX_COOKS = 40;
+/** Extra copies of the script run this far behind the original, so they don't move in step. */
+const LAP_OFFSET_MS = 2_300;
+
+/**
+ * Sessions at `t` ms into the loop. `base` is the epoch ms at which this loop started.
+ * `count` above the five scripted cooks adds copies of them, shifted in time (stress test).
+ */
+export function demoFrame(t: number, base = 0, count = SCRIPT.length): SessionView[] {
   const sessions: SessionView[] = [];
-  for (const cook of SCRIPT) {
-    if (cook.arrive !== undefined && lt < cook.arrive) continue;
-    if (cook.leave !== undefined && lt >= cook.leave) continue;
-    const seg = segmentAt(cook.segments, lt);
-    const worked = Math.floor(workingMs(cook.segments, lt) / TOKEN_STEP_MS) * TOKEN_STEP_MS;
-    const total = cook.baseTokens + Math.round((cook.rate * worked) / 1000);
-    const subagents: SubagentView[] = (cook.commis ?? [])
-      .filter((c) => lt >= c.from && lt < c.to)
-      .map((c) => {
-        const s = segmentAt(c.segments, lt);
-        return {
-          subagentId: c.id,
-          type: c.type,
-          state: s.state,
-          activity: activityOf(s, base),
-        };
-      });
-    sessions.push({
-      sessionId: cook.id,
-      kind: cook.kind,
-      agent: cook.agent,
-      cwd: cook.cwd,
-      repo: cook.repo,
-      state: seg.state,
-      activity: activityOf(seg, base),
-      tokens: {
-        input: Math.round(total * 0.3),
-        output: Math.round(total * 0.1),
-        cacheRead: Math.round(total * 0.55),
-        cacheWrite: Math.round(total * 0.05),
-      },
-      subagents,
-      startedAt: base - 42 * 60_000 + (cook.arrive ?? 0),
-      updatedAt: base + seg.at,
-    });
+  for (let k = 0; k < count; k++) {
+    const lap = Math.floor(k / SCRIPT.length);
+    const cook = SCRIPT[k % SCRIPT.length]!;
+    const s = cookFrame(cook, t + lap * LAP_OFFSET_MS, base);
+    if (!s) continue;
+    if (lap > 0) {
+      s.sessionId = `${s.sessionId}-${lap}`;
+      for (const sub of s.subagents) sub.subagentId = `${sub.subagentId}-${lap}`;
+    }
+    sessions.push(s);
   }
   return sessions;
+}
+
+function cookFrame(cook: CookScript, t: number, base: number): SessionView | null {
+  const lt = ((t % DEMO_LOOP_MS) + DEMO_LOOP_MS) % DEMO_LOOP_MS;
+  if (cook.arrive !== undefined && lt < cook.arrive) return null;
+  if (cook.leave !== undefined && lt >= cook.leave) return null;
+  const seg = segmentAt(cook.segments, lt);
+  const worked = Math.floor(workingMs(cook.segments, lt) / TOKEN_STEP_MS) * TOKEN_STEP_MS;
+  const total = cook.baseTokens + Math.round((cook.rate * worked) / 1000);
+  const subagents: SubagentView[] = (cook.commis ?? [])
+    .filter((c) => lt >= c.from && lt < c.to)
+    .map((c) => {
+      const s = segmentAt(c.segments, lt);
+      return {
+        subagentId: c.id,
+        type: c.type,
+        state: s.state,
+        activity: activityOf(s, base),
+      };
+    });
+  return {
+    sessionId: cook.id,
+    kind: cook.kind,
+    agent: cook.agent,
+    cwd: cook.cwd,
+    repo: cook.repo,
+    state: seg.state,
+    activity: activityOf(seg, base),
+    tokens: {
+      input: Math.round(total * 0.3),
+      output: Math.round(total * 0.1),
+      cacheRead: Math.round(total * 0.55),
+      cacheWrite: Math.round(total * 0.05),
+    },
+    subagents,
+    startedAt: base - 42 * 60_000 + (cook.arrive ?? 0),
+    updatedAt: base + seg.at,
+  };
 }
 
 function segmentAt(segments: readonly Segment[], t: number): Segment {
@@ -255,17 +275,18 @@ export class DemoFeed {
     private readonly onMessage: (msg: ServerMessage) => void,
     private readonly now: () => number = () => Date.now(),
     private readonly tickMs = 200,
+    private readonly count = SCRIPT.length,
   ) {}
 
   start(): void {
     const start = this.now();
-    this.prev = demoFrame(0, start);
+    this.prev = demoFrame(0, start, this.count);
     this.onMessage({ type: 'hello', protocol: PROTOCOL_VERSION, serverVersion: 'demo' });
     this.onMessage({ type: 'snapshot', sessions: this.prev });
     this.timer = setInterval(() => {
       const elapsed = this.now() - start;
       const loopStart = start + Math.floor(elapsed / DEMO_LOOP_MS) * DEMO_LOOP_MS;
-      const next = demoFrame(elapsed, loopStart);
+      const next = demoFrame(elapsed, loopStart, this.count);
       for (const msg of diffSessions(this.prev, next)) this.onMessage(msg);
       this.prev = next;
     }, this.tickMs);
@@ -279,4 +300,10 @@ export class DemoFeed {
 
 export function isDemo(search: string): boolean {
   return new URLSearchParams(search).has('demo');
+}
+
+/** Cooks for `?demo=N` (clamped), or the five scripted ones for a bare `?demo`. */
+export function demoCount(search: string): number {
+  const n = Number.parseInt(new URLSearchParams(search).get('demo') ?? '', 10);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, DEMO_MAX_COOKS) : SCRIPT.length;
 }
