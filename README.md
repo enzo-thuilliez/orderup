@@ -13,7 +13,7 @@ station, sessions waiting for you ring the bell at the pass, finished ones plate
 "Order up!", and quiet ones take a coffee break out back. Subagents show up as commis cooks
 next to their chef, and token usage runs on the ticket rail.
 
-> **Status:** early scaffold (V0). Not on npm yet. See [ROADMAP.md](ROADMAP.md).
+> **Status:** early (0.1). See [ROADMAP.md](ROADMAP.md).
 
 ## Quick start
 

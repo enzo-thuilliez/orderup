@@ -1,8 +1,15 @@
 {
   "name": "orderup-cli",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "description": "Watch your Claude Code sessions come alive as cooks in a cozy 3D kitchen.",
+  "keywords": [
+    "claude-code",
+    "claude",
+    "ai-agents",
+    "three.js",
+    "visualization",
+    "cli"
+  ],
   "license": "MIT",
   "author": "Enzo Thuilliez",
   "homepage": "https://github.com/enzo-thuilliez/orderup#readme",
@@ -27,7 +34,17 @@
   },
   "dependencies": {
     "jsonc-parser": "^3.3.1",
+    "ws": "^8.21.3"
+  },
+  "scripts": {
+    "build": "node ../../scripts/bundle-cli.mjs",
+    "prepack": "node ../../scripts/bundle-cli.mjs --check"
+  },
+  "devDependencies": {
     "orderup-server": "^0.0.0",
     "orderup-shared": "^0.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -16,11 +16,11 @@ const { version } = createRequire(import.meta.url)('../package.json') as { versi
 const VITE_DEV_ORIGIN = 'http://localhost:5173';
 
 /**
- * The built kitchen: bundled next to the CLI once published (`web/`), or the workspace
- * build in the monorepo (`packages/web/dist`). Works from both `src/` (tsx) and `dist/`.
+ * The built kitchen: bundled next to the CLI in the published package (`dist/web/`), or the
+ * workspace build in the monorepo (`packages/web/dist`). Works from both `src/` (tsx) and `dist/`.
  */
 function resolveWebRoot(): string | undefined {
-  return ['../web', '../../web/dist']
+  return ['./web', '../../web/dist']
     .map((rel) => fileURLToPath(new URL(rel, import.meta.url)))
     .find((dir) => existsSync(path.join(dir, 'index.html')));
 }

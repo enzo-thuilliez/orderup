@@ -8,3 +8,7 @@ coverage/
 !.env.example
 *.orderup-bak
 .DS_Store
+
+# orderup-cli package build (scripts/bundle-cli.mjs)
+packages/cli/README.md
+packages/cli/LICENSE

@@ -2,7 +2,8 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "rootDir": "src",
-    "outDir": "dist"
+    // Typecheck only: the published dist/ is the esbuild bundle (scripts/bundle-cli.mjs).
+    "noEmit": true
   },
   "include": ["src"],
   "references": [{ "path": "../shared" }, { "path": "../server" }]

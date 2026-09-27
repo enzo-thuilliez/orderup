@@ -43,7 +43,7 @@ ones, supersede them instead.
 - **Decision:** TypeScript strict in every package. Node packages compile with `tsc -b`
   (project references); the web app is bundled by Vite. In dev, `tsx` and Vite resolve
   workspace packages to sources through a `source` export condition.
-- **Consequences:** A build step before publishing. Single-package bundling for npm is V2 work.
+- **Consequences:** A build step before publishing. Single-package bundling for npm: ADR-013.
 
 ## ADR-005: A `shared` workspace for the protocol
 
@@ -101,7 +101,7 @@ ones, supersede them instead.
   - The published package is `orderup-cli` (unscoped), with bin `orderup`. Users run
     `npx orderup-cli`, or `npm i -g orderup-cli` then `orderup`.
   - Internal workspaces are `orderup-shared`, `orderup-server` and `orderup-web`. They are
-    never published: V2 bundles them into `orderup-cli`.
+    never published: they are bundled into `orderup-cli` (ADR-013).
   - Every package stays `"private": true` until the npm-publish issue lands.
   - The GitHub repo stays `enzo-thuilliez/orderup`. The product name stays OrderUp.
 - **Consequences:** A 0.0.1 placeholder of `orderup-cli` should be published early to hold
@@ -181,3 +181,26 @@ ones, supersede them instead.
 - **Consequences:** One runtime dependency for the CLI. Its ESM build doesn't load in Node,
   so it's imported through its CommonJS entry. Appending after the user's last key still
   adds a comma to that line, which JSON requires.
+
+## ADR-013: One bundled npm package, published from CI with provenance
+
+- **Status:** accepted (2026-09-27)
+- **Context:** Users run `npx orderup-cli`. The internal workspaces aren't on npm (ADR-009),
+  so the package must carry them, and a Node CLI can't ship TypeScript sources (ADR-004).
+- **Decision:**
+  - esbuild bundles `cli`, `server` and `shared` from their sources (`source` condition) into
+    one ESM file, `packages/cli/dist/index.js`. The built kitchen is copied to
+    `packages/cli/dist/web/`. No source maps ship. `tsc -b` still typechecks the CLI but emits
+    nothing for it.
+  - `ws` and `jsonc-parser` stay runtime dependencies instead of being inlined: both are
+    CommonJS (`ws` with optional native add-ons, `jsonc-parser` as UMD with runtime
+    `require` calls) and break inside an ESM bundle. Neither has dependencies of its own.
+  - `npm run smoke` installs the packed tarball in a temp project with a throwaway `HOME`
+    and checks its contents, `--help`, and a start/serve/stop. CI runs it on Linux, then on
+    macOS and Windows with the same tarball, for Node 22.13 and 24.
+  - Changesets bumps versions. `changelog: false`: CHANGELOG.md stays hand-written.
+  - `release.yml` publishes on a `v*` tag, or manually with a dry-run default, through npm
+    trusted publishing (OIDC): no stored token, provenance on every version, behind a
+    GitHub `npm` environment.
+- **Consequences:** Two runtime dependencies. A release is a version PR followed by a tag.
+  The one-time npm and GitHub setup is in [docs/releasing.md](docs/releasing.md).

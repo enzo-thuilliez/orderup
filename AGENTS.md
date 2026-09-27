@@ -51,10 +51,11 @@ npm run format         # prettier --write
 npm run format:check   # prettier --check
 npm run typecheck      # tsc -b + web
 npm test               # vitest
-npm run build          # tsc -b + vite build
+npm run build          # tsc -b + vite build + bundle orderup-cli (scripts/bundle-cli.mjs)
+npm run smoke          # npm pack orderup-cli, install it in a temp dir, run and stop it
 ```
 
-Run lint, format:check, typecheck, test and build before proposing a PR. CI runs the same.
+Run lint, format:check, typecheck, test, build and smoke before proposing a PR. CI runs the same.
 
 ## Conventions
 

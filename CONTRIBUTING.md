@@ -26,8 +26,9 @@ npm run dev      # server on http://127.0.0.1:7717, kitchen on http://localhost:
 | `npm run typecheck`    | `tsc -b` for Node packages, `tsc` for web |
 | `npm test`             | Vitest                                    |
 | `npm run build`        | Compile Node packages, bundle the web app |
+| `npm run smoke`        | Pack `orderup-cli`, install it, run it    |
 
-CI runs `lint`, `format:check`, `typecheck`, `test` and `build` on Node 22.13 and 24, on every push to `main` and every PR.
+CI runs `lint`, `format:check`, `typecheck`, `test`, `build` and `smoke` on Node 22.13 and 24, on every push to `main` and every PR, then smoke-tests the packed CLI on macOS and Windows. The `ci-pass` check is green only if all of it is.
 
 ## Workflow
 
@@ -50,7 +51,9 @@ trust dialog. Deny rules (no force pushes, no pushes to `main`) apply either way
 
 - [docs/architecture.md](docs/architecture.md) when behaviour or the protocol changes.
 - [DECISIONS.md](DECISIONS.md) for decisions with trade-offs (add an ADR).
-- [CHANGELOG.md](CHANGELOG.md) under `Unreleased` for user-visible changes.
+- [CHANGELOG.md](CHANGELOG.md) under `Unreleased` for user-visible changes, plus a changeset
+  (`npx changeset`) if `orderup-cli` needs a release for it. See
+  [docs/releasing.md](docs/releasing.md).
 
 ## Testing hooks safely
 
