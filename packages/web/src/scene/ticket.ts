@@ -1,7 +1,7 @@
 /** An order ticket on the rail: repo, state and running token count, drawn on a canvas. */
 import type { SessionView } from 'orderup-shared';
 import * as THREE from 'three';
-import { displayName, formatTokens, totalTokens } from '../logic/cook';
+import { displayName, formatTokens, hashString, totalTokens } from '../logic/cook';
 import { css, palette } from '../palette';
 
 const W = 180;
@@ -24,9 +24,11 @@ export class Ticket {
   private readonly texture: THREE.CanvasTexture;
   private readonly material: THREE.MeshStandardMaterial;
   private key = '';
-  private readonly phase = Math.random() * 10;
+  /** Sway phase, from the session id so the kitchen looks the same on every run (?demo GIF). */
+  private readonly phase: number;
 
-  constructor() {
+  constructor(sessionId: string) {
+    this.phase = (hashString(sessionId) % 1000) / 100;
     this.canvas.width = W * SCALE;
     this.canvas.height = H * SCALE;
     this.texture = new THREE.CanvasTexture(this.canvas);

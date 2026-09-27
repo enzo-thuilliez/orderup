@@ -46,6 +46,7 @@ packages/web      orderup-web     Vite + three.js kitchen
 npm install            # also installs git hooks (lint-staged, commitlint)
 npm run dev            # server on :7717 + Vite on :5173
 npm run cli:sandbox -- <flags>   # CLI from source with a temporary HOME
+npm run demo:record   # build, then record docs/assets/demo.gif from ?demo (needs Playwright Chromium)
 npm run lint           # eslint
 npm run format         # prettier --write
 npm run format:check   # prettier --check

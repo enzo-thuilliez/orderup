@@ -228,7 +228,7 @@ export class Cooks {
     const label = makeLabel(false);
     figure.root.add(label.object);
     this.parent.add(figure.root);
-    const ticket = new Ticket();
+    const ticket = new Ticket(session.sessionId);
     this.rail.add(ticket.object);
     const cook: Cook = {
       id: session.sessionId,
@@ -265,7 +265,7 @@ export class Cooks {
   /** The session is back before its cook made it out: turn round instead of respawning. */
   private comeBack(cook: Cook): void {
     cook.leaving = false;
-    cook.ticket = new Ticket();
+    cook.ticket = new Ticket(cook.id);
     this.rail.add(cook.ticket.object);
     cook.label.object.element.style.display = '';
     cook.targetKey = '';

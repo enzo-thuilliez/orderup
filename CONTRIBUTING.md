@@ -17,16 +17,17 @@ npm run dev      # server on http://127.0.0.1:7717, kitchen on http://localhost:
 
 ## Scripts
 
-| Command                | What it does                              |
-| ---------------------- | ----------------------------------------- |
-| `npm run dev`          | Server (watch mode) and Vite dev server   |
-| `npm run lint`         | ESLint                                    |
-| `npm run format`       | Prettier, writes changes                  |
-| `npm run format:check` | Prettier, check only                      |
-| `npm run typecheck`    | `tsc -b` for Node packages, `tsc` for web |
-| `npm test`             | Vitest                                    |
-| `npm run build`        | Compile Node packages, bundle the web app |
-| `npm run smoke`        | Pack `orderup-cli`, install it, run it    |
+| Command                | What it does                               |
+| ---------------------- | ------------------------------------------ |
+| `npm run dev`          | Server (watch mode) and Vite dev server    |
+| `npm run lint`         | ESLint                                     |
+| `npm run format`       | Prettier, writes changes                   |
+| `npm run format:check` | Prettier, check only                       |
+| `npm run typecheck`    | `tsc -b` for Node packages, `tsc` for web  |
+| `npm test`             | Vitest                                     |
+| `npm run build`        | Compile Node packages, bundle the web app  |
+| `npm run smoke`        | Pack `orderup-cli`, install it, run it     |
+| `npm run demo:record`  | Record `docs/assets/demo.gif` from `?demo` |
 
 CI runs `lint`, `format:check`, `typecheck`, `test`, `build` and `smoke` on Node 22.13 and 24, on every push to `main` and every PR, then smoke-tests the packed CLI on macOS and Windows. The `ci-pass` check is green only if all of it is.
 
