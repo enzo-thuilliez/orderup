@@ -7,6 +7,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Docs: ADR-015 decides the crew runtime (the user's own headless `claude` CLI, not the
+  Agent SDK), auth, cost tracking, guardrails and the command channel threat model.
+
 ## [0.1.0] - 2026-09-27
 
 First release on npm: `npx orderup-cli`.
