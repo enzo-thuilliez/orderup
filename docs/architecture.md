@@ -5,7 +5,7 @@
 ```
 Claude Code ──hooks (HTTP POST)──▶ server ◀──tail── ~/.claude/projects/**/*.jsonl
                                      │ session reducer (pure)
-                                     │ crew runner (V1, Claude Agent SDK) ─▶ node:sqlite
+                                     │ crew runner (V1, headless `claude -p`) ─▶ node:sqlite
                                      ▼
                          WebSocket snapshot + diffs ◀──▶ web (three.js kitchen)
                                                    commands (reserved)
@@ -19,11 +19,11 @@ cli (npx orderup-cli): starts server → opens browser → offers hook install
 | `orderup-cli`    | Entry point: args, starts server, opens browser, installs/removes hooks   |
 | `orderup-web`    | Vite + three.js kitchen, cooks, props, camera, cook panel                 |
 
-## Cook kinds (ADR-008)
+## Cook kinds (ADR-008, ADR-015)
 
 |             | Observed                          | Crew (V1)                                 |
 | ----------- | --------------------------------- | ----------------------------------------- |
-| Source      | Any Claude Code session, any repo | Run by the server (Claude Agent SDK)      |
+| Source      | Any Claude Code session, any repo | The user's `claude` CLI, run headless     |
 | Identity    | `sessionId`, `agent: null`        | `sessionId` + `agent` (id, role, persona) |
 | Control     | Read-only                         | Commands: `crew.message`, `crew.spawn`    |
 | Token cost  | Zero                              | Spends the user's tokens                  |
@@ -209,6 +209,15 @@ Defined in `packages/shared/src/protocol.ts`.
 
 See [SECURITY.md](../SECURITY.md) and ADR-003. In short: `127.0.0.1` only, `Host`/`Origin`
 checks on HTTP and WebSocket, and a per-launch secret before the command channel is enabled.
+
+## Crew (V1)
+
+Runtime, auth, billing, member definition, guardrails and the command channel threat model
+are decided in [ADR-015](../DECISIONS.md#adr-015-crew-runtime-auth-and-guardrails). In short:
+crew cooks are the user's own `claude` CLI spawned headless (`claude -p`, stream-json,
+`--resume`), OrderUp never touches credentials, crew is off unless started with `--crew`, and
+every member has an allowed tools list, a daily usage cap in API-equivalent USD, and a cost
+shown per run.
 
 ## Kitchen (web)
 

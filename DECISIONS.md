@@ -69,7 +69,8 @@ ones, supersede them instead.
 
 ## ADR-008: Observed cooks and crew cooks
 
-- **Status:** accepted (2026-09-25); implementation starts in V1
+- **Status:** accepted (2026-09-25); implementation starts in V1; runtime superseded by
+  ADR-015
 - **Context:** OrderUp starts as an observer, but the goal includes a crew of agents that
   users can talk to and that build OrderUp itself. The protocol and storage should not need
   a rewrite when control arrives.
@@ -228,3 +229,62 @@ ones, supersede them instead.
 - **Consequences:** A recording takes about 2.5 minutes. Playwright and its Chromium are
   dev-only (`npx playwright install --only-shell chromium`). gifenc can't crop frames to
   the changed region, so size is managed with fps, viewport and tolerance flags.
+
+## ADR-015: Crew runtime, auth and guardrails
+
+- **Status:** accepted (2026-09-29); supersedes the Agent SDK runtime in ADR-008
+- **Context:** ADR-008 planned to run crew cooks through the Claude Agent SDK. Its
+  [docs](https://code.claude.com/docs/en/agent-sdk/overview) say that, unless previously
+  approved, third-party products may not offer claude.ai login or rate limits and must use
+  API keys. OrderUp is a distributed open-source tool, so that applies to it. Crew commands
+  also run code on the user's machine and spend their money, so the runtime, auth, billing
+  and guardrails are decided together, before any crew code.
+- **Decision:**
+  - **Runtime.** A crew member is the user's own installed `claude` CLI, spawned headless by
+    the server: `claude -p` with `--output-format stream-json`, resumed by session id
+    (`--resume`). OrderUp does not embed the Agent SDK.
+  - **Auth.** OrderUp never reads, stores or forwards credentials. The spawned CLI uses
+    whatever the user configured (subscription login or `ANTHROPIC_API_KEY`).
+    `orderup --doctor` only checks that `claude` exists and is logged in.
+  - **Billing (as of 2026-09-29).** Headless and SDK usage draws from subscription limits. A
+    June 15 2026 split to a separate metered "Agent SDK credit" was announced, then paused;
+    Anthropic says it will give notice before any change
+    ([support article](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan)).
+    So OrderUp always tracks and shows $ per run and per member: a switch to metered billing
+    is then visible and needs no redesign.
+  - **Observed vs crew.** Crew sessions also fire the user's OrderUp hooks. The runner
+    records the session ids it owns, and the server renders those as `crew` cooks, not as
+    duplicate observed ones (the tailer skip from ADR-008 uses the same list).
+  - **Crew member.** `id`, `name`, `role`, `persona` (one line), working directory (a local
+    repo path), `model`, allowed tools list, daily usage cap in API-equivalent USD.
+  - **Guardrails.** Defaults, all configurable:
+    - Crew is disabled unless `orderup` is started with `--crew`.
+    - The permission mode is never bypassed by default. Each member has an explicit allowed
+      tools list.
+    - Daily usage cap per member, measured in API-equivalent USD as reported by the CLI (on a
+      subscription this is notional: it measures quota consumption, not money billed; with an
+      API key or a future metered credit it is real spend): default 5, set to 0 to disable. A
+      run is refused when the cap is reached and killed if it crosses the cap mid-run.
+    - Max turns per run: 30. Max concurrent members: 3.
+    - Every child process is killed on server shutdown.
+    - Crew never pushes to `main`: work happens on branches, and lands through PRs only.
+  - **Command channel.** WebSocket commands (talk, assign, stop) run code on the user's
+    machine, so the channel is treated as a remote code execution surface. It binds to
+    `127.0.0.1` only (ADR-003), requires a random per-start token (written to a file with
+    `0600` permissions and injected into the locally served page), checks `Origin`, and
+    rejects everything else.
+  - **Cloud routines** are out of scope for V1. They run on Anthropic's cloud, draw
+    subscription usage with daily run caps, and never appear as cooks. They are a candidate
+    for scheduled crew in V2, through the
+    [routines fire API](https://platform.claude.com/docs/en/api/claude-code/routines-fire).
+- **Alternatives considered:**
+  - Agent SDK with subscription login: rejected, not allowed by its terms for a third-party
+    product.
+  - Agent SDK with an API key only: rejected as the default, because it forces API billing on
+    every user. Can be revisited as an option.
+  - Cloud routines as the crew runtime: deferred to V2 (see above).
+- **Consequences:**
+  - OrderUp depends on the `claude` CLI's flags and stream-json output format.
+    `orderup --doctor` pins a minimum version and fails below it.
+  - Cost must be visible everywhere crew appears: per run, per member, per day.
+  - Issues #17 to #26 implement this ADR.
