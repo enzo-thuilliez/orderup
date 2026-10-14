@@ -74,6 +74,8 @@ export interface SessionView {
   kind: CookKind;
   /** Crew identity. Always null for observed sessions. */
   agent: AgentRef | null;
+  /** `CrewMember.id` running this session. Absent for observed sessions. */
+  crewMemberId?: string;
   /** Working directory of the session. */
   cwd: string;
   /** Git repository name for `cwd`, or null outside a repo. */
@@ -113,3 +115,83 @@ export interface ClientMessage {
   id: string;
   command: Command;
 }
+
+/** A crew member's configuration: who they are and what they may do (V1, ADR-015). */
+export interface CrewMember {
+  id: string;
+  name: string;
+  /** e.g. "sous-chef", "reviewer". */
+  role: string;
+  /** One line, e.g. "Careful reviewer who asks for tests." */
+  persona: string;
+  /** Absolute path the member works in. */
+  workingDir: string;
+  /** Claude model id. */
+  model: string;
+  /** Claude Code tool names the member may use, e.g. ["Read", "Grep"]. */
+  allowedTools: string[];
+  /** API-equivalent USD per day (notional on a subscription). 0 disables the cap. */
+  dailyUsageCapUsd: number;
+}
+
+/** Points at a GitHub issue. */
+export interface TicketRef {
+  /** "owner/name". */
+  repo: string;
+  number: number;
+}
+
+/** An order ticket: a GitHub issue on the rail. */
+export interface Ticket extends TicketRef {
+  title: string;
+  labels: string[];
+  url: string;
+}
+
+/**
+ * Client → server crew commands (V1, ADR-015). They supersede the reserved V0 `Command`
+ * and are sent as top-level messages. The server answers each one with `ack` or `error`.
+ */
+export type CrewCommand =
+  | { type: 'talk'; requestId: string; token: string; memberId: string; text: string }
+  | { type: 'assign'; requestId: string; token: string; memberId: string; ticket: TicketRef }
+  | { type: 'stop'; requestId: string; token: string; memberId: string };
+
+export type CrewCommandType = CrewCommand['type'];
+
+export type CrewErrorCode =
+  | 'unauthorized'
+  | 'unknown_member'
+  | 'busy'
+  | 'usage_cap_reached'
+  | 'crew_disabled'
+  | 'invalid_command';
+
+/** Server → client reply to a `CrewCommand`, matched by `requestId`. */
+export type CrewCommandReply =
+  | { type: 'ack'; requestId: string }
+  | { type: 'error'; requestId: string; code: CrewErrorCode; message: string };
+
+export type CrewRunStatus = 'success' | 'error' | 'stopped' | 'usage_cap_reached';
+
+/** Usage of one crew run. `costUsd` is API-equivalent (notional on a subscription). */
+export interface CrewRunUsage {
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+}
+
+/** Server → client progress of a crew run, broadcast to every client. */
+export type CrewEvent =
+  | { type: 'crew.run.started'; memberId: string; runId: string; sessionId: string }
+  | { type: 'crew.message.delta'; memberId: string; runId: string; text: string }
+  | {
+      type: 'crew.run.ended';
+      memberId: string;
+      runId: string;
+      status: CrewRunStatus;
+      usage: CrewRunUsage;
+    };
+
+/** Every crew message the server may send. Kept apart from `ServerMessage` until V1 wires it. */
+export type CrewServerMessage = CrewCommandReply | CrewEvent;

@@ -9,8 +9,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Docs: ADR-015 decides the crew runtime (the user's own headless `claude` CLI, not the
-  Agent SDK), auth, cost tracking, guardrails and the command channel threat model.
+- Wire protocol: crew types for V1 (`CrewMember`, `Ticket`, `talk` / `assign` / `stop`
+  commands with `ack` / `error` replies, and `crew.run.*` / `crew.message.delta` events), plus
+  an optional `crewMemberId` on sessions. Types only; nothing uses them yet.
 
 ## [0.1.0] - 2026-09-27
 
