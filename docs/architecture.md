@@ -341,8 +341,9 @@ with `--crew`: `startServer` then opens the database and a runner, and `close()`
   process group, in the task's chef worktree:
   `-p --output-format stream-json --verbose --max-turns 30 --agents <agentsJson()>
 --settings {"worktree":{"baseRef":"head"}}`, plus `--model` when `brigade_config` has one,
-  `--resume <id>` when given and `--max-budget-usd <what is left today>` when the daily cap
-  is on. Never `--bare`, never a permission-bypass flag. The prompt goes on stdin, so it is
+  `--resume <id>` when given and `--max-budget-usd <daily_cap_usd minus today's usage>`
+  (whole cents, rounded down, at least 0.01) when the daily cap is on; with a cap of 0 the
+  flag is omitted. Never `--bare`, never a permission-bypass flag. The prompt goes on stdin, so it is
   neither parsed as a flag nor visible in the process list. stderr is dropped.
 - **Environment.** `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` = `brigade_config.global_cap`,
   `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1`, and the push guard: `GIT_CONFIG_COUNT=1`,

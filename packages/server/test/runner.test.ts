@@ -14,6 +14,7 @@ import {
   installPushGuard,
   localDay,
   MAX_CONCURRENT_RUNS,
+  MIN_BUDGET_USD,
   openDatabase,
   parseStreamLine,
   removeChefWorktree,
@@ -101,7 +102,9 @@ function setup(config: { dailyCapUsd?: number; chefModel?: string | null } = {})
   });
   runners.push(runner);
   const logs = (): FakeLog[] =>
-    readdirSync(logDir).map((f) => JSON.parse(readFileSync(path.join(logDir, f), 'utf8')));
+    readdirSync(logDir)
+      .filter((f) => f.endsWith('.json'))
+      .map((f) => JSON.parse(readFileSync(path.join(logDir, f), 'utf8')));
   const ended = (runId: string) =>
     waitFor(
       () =>
@@ -220,6 +223,15 @@ describe('buildChefArgs', () => {
       '--max-budget-usd',
       '4.50',
     ]);
+    const budget = (maxBudgetUsd: number | null) => {
+      const a = buildChefArgs({ maxBudgetUsd });
+      return a.includes('--max-budget-usd') ? a[a.indexOf('--max-budget-usd') + 1] : null;
+    };
+    expect(budget(3.749)).toBe('3.74');
+    expect(budget(0.001)).toBe('0.01');
+    expect(budget(0)).toBe('0.01');
+    expect(budget(-2)).toBe('0.01');
+    expect(budget(null)).toBeNull();
     const plain = buildChefArgs({});
     expect(plain).not.toContain('--model');
     expect(plain).not.toContain('--resume');
@@ -497,6 +509,31 @@ describe('CrewRunner', () => {
     });
   });
 
+  it('passes the remaining daily budget as --max-budget-usd, never below the floor', async () => {
+    const budgetArg = (log: FakeLog) => log.args[log.args.indexOf('--max-budget-usd') + 1];
+    const { runner, repository, ended, logs } = setup({ dailyCapUsd: 5 });
+    repository.startRun({ id: 'old', trigger: 'talk' });
+    repository.addUsage({ runId: 'old', costUsd: 1.25 });
+    const first = await started(runner, { trigger: 'talk', taskId: 't1', prompt: 'scenario:ok' });
+    await ended(first);
+    expect(budgetArg(logs()[0]!)).toBe('3.75');
+
+    // The ok run spent 0.25; then nearly all of the rest goes: the floor applies.
+    repository.addUsage({ runId: 'old', costUsd: 3.499 });
+    const second = await started(runner, { trigger: 'talk', taskId: 't2', prompt: 'scenario:ok' });
+    await ended(second);
+    expect(logs().map(budgetArg).sort()).toEqual([MIN_BUDGET_USD.toFixed(2), '3.75']);
+  });
+
+  it('omits --max-budget-usd when the daily cap is 0', async () => {
+    const { runner, repository, ended, logs } = setup({ dailyCapUsd: 0 });
+    repository.startRun({ id: 'old', trigger: 'talk' });
+    repository.addUsage({ runId: 'old', costUsd: 12 });
+    const runId = await started(runner, { trigger: 'talk', taskId: 't1', prompt: 'scenario:ok' });
+    await ended(runId);
+    expect(logs()[0]!.args).not.toContain('--max-budget-usd');
+  });
+
   it('has no cap at 0', async () => {
     const { runner, repository, ended } = setup({ dailyCapUsd: 0 });
     repository.startRun({ id: 'old', trigger: 'talk' });
@@ -573,7 +610,7 @@ describe('CrewRunner', () => {
       });
       expect(result).toMatchObject({ ok: true });
       const log = await waitFor(() => {
-        const files = readdirSync(logDir);
+        const files = readdirSync(logDir).filter((f) => f.endsWith('.json'));
         if (!files.length) return undefined;
         const parsed = JSON.parse(readFileSync(path.join(logDir, files[0]!), 'utf8')) as FakeLog;
         return parsed.grandchild ? parsed : undefined;

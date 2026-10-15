@@ -136,11 +136,24 @@ interface ActiveRun {
 
 const ZERO_TOKENS: UsageTokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
+/** Smallest `--max-budget-usd` the runner passes: 0 or less would end a run before it starts. */
+export const MIN_BUDGET_USD = 0.01;
+
+/** The remaining budget in whole cents, rounded down so the CLI never gets more than is left. */
+function budgetArg(remainingUsd: number): string {
+  const cents = Math.floor(remainingUsd * 100 + 1e-9) / 100;
+  return Math.max(MIN_BUDGET_USD, cents).toFixed(2);
+}
+
 /** The `claude` arguments for a chef run. The prompt is not among them: it goes on stdin. */
 export function buildChefArgs(options: {
   model?: string | null;
   resumeSessionId?: string;
-  /** Remaining daily budget, passed as `--max-budget-usd`; omitted when there is no cap. */
+  /**
+   * What is left of today's budget (`daily_cap_usd` minus today's usage), passed as
+   * `--max-budget-usd` with a floor of `MIN_BUDGET_USD`. Null when the cap is 0 (no cap): the
+   * flag is then omitted.
+   */
   maxBudgetUsd?: number | null;
 }): string[] {
   const args = [
@@ -159,9 +172,8 @@ export function buildChefArgs(options: {
   ];
   if (options.model) args.push('--model', options.model);
   if (options.resumeSessionId) args.push('--resume', options.resumeSessionId);
-  if (options.maxBudgetUsd != null && options.maxBudgetUsd > 0) {
-    // Never rounds down to 0.00, which would end the run before it starts.
-    args.push('--max-budget-usd', Math.max(0.01, options.maxBudgetUsd).toFixed(2));
+  if (options.maxBudgetUsd != null) {
+    args.push('--max-budget-usd', budgetArg(options.maxBudgetUsd));
   }
   return args;
 }

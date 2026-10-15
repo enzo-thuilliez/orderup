@@ -4,7 +4,7 @@
 // stream-json lines on stdout, and writes what it was given (args, cwd, the env it cares
 // about, its pid) as JSON to $FAKE_CLAUDE_LOG, one file per run. Executable, with a shebang: the runner spawns it as the `claude` binary.
 import { spawn } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { renameSync, writeFileSync } from 'node:fs';
 
 const chunks = [];
 for await (const chunk of process.stdin) chunks.push(chunk);
@@ -34,7 +34,10 @@ const log = {
 
 function save() {
   if (process.env.FAKE_CLAUDE_LOG) {
-    writeFileSync(`${process.env.FAKE_CLAUDE_LOG}/${process.pid}.json`, JSON.stringify(log));
+    // Atomic: tests poll this file while the fake runs, and must never read half of it.
+    const file = `${process.env.FAKE_CLAUDE_LOG}/${process.pid}.json`;
+    writeFileSync(`${file}.tmp`, JSON.stringify(log));
+    renameSync(`${file}.tmp`, file);
   }
 }
 
