@@ -33,7 +33,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Server: authenticated crew command channel. With `--crew`, a fresh per-start token is
   written to `~/.orderup/command-token` (`0600`) and injected into the kitchen page; every
   crew command must pass the Host/Origin checks, the token and `parseCrewCommand`, within 10
-  per second per connection, before it reaches a `CrewController`. The stub controller answers
+  per second per connection (else a new `rate_limited` error code), before it reaches a
+  `CrewController`. The stub controller answers
   `crew_disabled` until the runner lands; without `--crew` every crew command gets
   `crew_disabled`.
 

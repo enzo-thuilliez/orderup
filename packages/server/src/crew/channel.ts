@@ -7,7 +7,7 @@ import {
 import { crewError, dispatchCrewCommand, type CrewController } from './controller.js';
 import { tokenMatches } from './token.js';
 
-/** Crew commands accepted per connection per second; more get `busy`. */
+/** Crew commands accepted per connection per second; more get `rate_limited`. */
 export const CREW_RATE_LIMIT = 10;
 const RATE_WINDOW_MS = 1000;
 
@@ -47,7 +47,7 @@ export function createCrewChannel({
     const t = now();
     while (recent.length && t - recent[0]! >= RATE_WINDOW_MS) recent.shift();
     if (recent.length >= CREW_RATE_LIMIT) {
-      return fail('busy', `rate limited: at most ${CREW_RATE_LIMIT} crew commands per second`);
+      return fail('rate_limited', `at most ${CREW_RATE_LIMIT} crew commands per second`);
     }
     recent.push(t);
 

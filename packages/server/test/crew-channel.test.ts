@@ -288,7 +288,7 @@ describe('crew command channel', () => {
       const total = CREW_RATE_LIMIT + 3;
       for (let i = 0; i < total; i++) k.send(talk(`r${i}`, { token: t }));
       await waitFor(() => k.replies().length === total || undefined);
-      const limited = k.replies().filter((r) => r.type === 'error' && r.code === 'busy');
+      const limited = k.replies().filter((r) => r.type === 'error' && r.code === 'rate_limited');
       expect(limited).toHaveLength(3);
       expect(controller.calls).toHaveLength(CREW_RATE_LIMIT);
 
@@ -328,9 +328,9 @@ describe('createCrewChannel rate limit', () => {
     for (let i = 0; i < CREW_RATE_LIMIT; i++) {
       expect(await channel(cmd(i))).toMatchObject({ type: 'ack' });
     }
-    expect(await channel(cmd(99))).toMatchObject({ type: 'error', code: 'busy' });
+    expect(await channel(cmd(99))).toMatchObject({ type: 'error', code: 'rate_limited' });
     now = 999;
-    expect(await channel(cmd(100))).toMatchObject({ type: 'error', code: 'busy' });
+    expect(await channel(cmd(100))).toMatchObject({ type: 'error', code: 'rate_limited' });
     now = 1000;
     expect(await channel(cmd(101))).toMatchObject({ type: 'ack' });
   });

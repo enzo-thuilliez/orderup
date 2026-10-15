@@ -244,9 +244,11 @@ Defined in `packages/shared/src/protocol.ts`.
   `Connection.sendCrew` attaches it to every crew command.
 - **Checks, in order.** The WebSocket upgrade already passed Host/Origin (ADR-003). Then per
   command: crew enabled (`crew_disabled`), rate limit of 10 commands per second per
-  connection (`busy`), token by `timingSafeEqual` on SHA-256 digests (`unauthorized`, checked
-  before the shape so an unauthenticated client learns nothing), then `parseCrewCommand`
-  (`chef_only`, `invalid_command`). Only then is the command executed.
+  connection (`rate_limited`), token by `timingSafeEqual` on SHA-256 digests
+  (`unauthorized`, checked before the shape so an unauthenticated client learns nothing),
+  then `parseCrewCommand` (`chef_only`, `invalid_command`). Only then is the command
+  executed. On Windows the token file's `0600` check is skipped (no POSIX modes there; see
+  SECURITY.md).
 - **Controller.** Valid commands go to a `CrewController` (`talk`, `assign`, `stop`,
   `approve`, `sendBack`) without their token, and its typed `ack` or `error` is sent back.
   Until the runner (#19) implements it, `DisabledCrewController` answers `crew_disabled`.
@@ -267,7 +269,8 @@ The command channel above handles crew commands; crew events are types only for 
   other malformed command, including unknown fields, with `invalid_command`.
 - **Replies**: `ack` names the command it answers and carries what it started (`runId`,
   `cardId`). `error` carries a `CrewErrorCode`: `unauthorized`, `chef_only`, `unknown_card`,
-  `invalid_card_status`, `busy`, `usage_cap_reached`, `crew_disabled`, `invalid_command`.
+  `invalid_card_status`, `busy`, `rate_limited`, `usage_cap_reached`, `crew_disabled`,
+  `invalid_command`.
 - **Report cards** (`ReportCard`): `id`, `taskId`, `ticket`, `status`
   (`cooking | ready | read | approved | sent-back`), `runStatus` (how the last run ended,
   `null` while the first one cooks) and timestamps. A card holds the chef's report block

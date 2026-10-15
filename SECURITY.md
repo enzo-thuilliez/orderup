@@ -40,5 +40,12 @@ them is only open with `orderup --crew`. Each start writes a fresh random token 
 `~/.orderup/command-token` (`0600`, removed on shutdown; crew refuses to start if it can't be
 written that way) and puts it in a `<meta>` tag of the locally served kitchen page. Every crew
 command must pass the Host/Origin checks, carry that token (compared in constant time) and
-pass schema validation; commands are also rate-limited per connection. The token is never
-logged or put in a URL. This policy will be updated before crew runs ship.
+pass schema validation; commands are also rate-limited per connection (`rate_limited`). The
+token is never logged or put in a URL.
+
+On Windows the `0600` check is skipped. Windows has no POSIX permission bits: Node reports a
+writable file as `0666` whatever its ACL, so the check would stop `--crew` from ever starting
+there. The token file then relies on the default ACL of the user's profile directory, which
+only that user (and administrators) can read.
+
+This policy will be updated before crew runs ship.

@@ -293,6 +293,8 @@ export type CrewErrorCode =
   /** The card's status does not allow this action. */
   | 'invalid_card_status'
   | 'busy'
+  /** Too many crew commands on this connection: at most 10 per second. */
+  | 'rate_limited'
   | 'usage_cap_reached'
   | 'crew_disabled'
   | 'invalid_command';
