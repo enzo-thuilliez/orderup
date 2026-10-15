@@ -303,14 +303,14 @@ edits tests and fixtures only; no station pushes. No station gets `Agent`.
 
 ### Brigade config (`orderup crew`)
 
-| Command                                                                                         | What                                                                     |
-| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `orderup crew status`                                                                           | config, stations, caps, daily budget and what was used today             |
-| `orderup crew set --repo <path>`                                                                | working repo of the head chef: must be a git repo, stored as its top     |
-| `orderup crew set --model <name>`                                                               | chef model (alias or full name); `default` goes back to the CLI's        |
-| `orderup crew set --station-cap <n>` / `--global-cap <n>`                                       | positive integers (defaults 4 and 8)                                     |
-| `orderup crew set --budget <usd>`                                                               | daily usage cap, API-equivalent USD, `>= 0` (default 5; 0 disables crew) |
-| `orderup crew install-agents [--repo <path>]` / `orderup crew uninstall-agents [--repo <path>]` | fallback station files (below)                                           |
+| Command                                                                                         | What                                                                                        |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `orderup crew status`                                                                           | config, stations, caps, daily budget and what was used today                                |
+| `orderup crew set --repo <path>`                                                                | working repo of the head chef: must be a git repo, stored as its top                        |
+| `orderup crew set --model <name>`                                                               | chef model (alias or full name); `default` goes back to the CLI's                           |
+| `orderup crew set --station-cap <n>` / `--global-cap <n>`                                       | positive integers (defaults 4 and 8)                                                        |
+| `orderup crew set --budget <usd>`                                                               | daily usage cap, API-equivalent USD, `>= 0` (default 5; 0 disables the cap: no daily limit) |
+| `orderup crew install-agents [--repo <path>]` / `orderup crew uninstall-agents [--repo <path>]` | fallback station files (below)                                                              |
 
 `set` takes several flags at once and validates all of them before writing anything. The
 config goes to `brigade_config` in the database.
@@ -336,11 +336,11 @@ opens it for the brigade config, and the crew runner (#19) will be its main user
   loads (Node 22 prints it); every other warning is left alone (ADR-008).
 - Tables so far (ADR-016 point 9):
 
-| Table                          | Columns                                                                                                                                                                                               |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `runs`                         | `id`, `chef_session_id`, `task_id`, `trigger` (`talk` / `assign` / `send-back`), `started_at`, `ended_at`, `status` (`running` / `success` / `error` / `stopped`)                                     |
-| `usage`                        | `run_id`, input / output / cache read / cache write tokens, `cost_usd` (API-equivalent), `day` (local `YYYY-MM-DD`), `recorded_at`                                                                    |
-| `brigade_config` (migration 2) | one row: `repo_path`, `chef_model` (both NULL until set), `station_cap` (4), `global_cap` (8), `daily_cap_usd` (5), `stations_hash`, `updated_at`; caps `> 0` and budget `>= 0` are CHECK constraints |
+| Table                          | Columns                                                                                                                                                                                                                 |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `runs`                         | `id`, `chef_session_id`, `task_id`, `trigger` (`talk` / `assign` / `send-back`), `started_at`, `ended_at`, `status` (`running` / `success` / `error` / `stopped`)                                                       |
+| `usage`                        | `run_id`, input / output / cache read / cache write tokens, `cost_usd` (API-equivalent), `day` (local `YYYY-MM-DD`), `recorded_at`                                                                                      |
+| `brigade_config` (migration 2) | one row: `repo_path`, `chef_model` (both NULL until set), `station_cap` (4), `global_cap` (8), `daily_cap_usd` (5; 0 = no daily cap), `stations_hash`, `updated_at`; caps `> 0` and budget `>= 0` are CHECK constraints |
 
 `Repository.usageTotalForDay(day)` sums `usage` for one local day: the figure the daily
 budget cap is checked against. `getBrigadeConfig()` and `updateBrigadeConfig(patch)` read

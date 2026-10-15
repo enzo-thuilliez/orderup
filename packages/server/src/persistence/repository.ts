@@ -48,7 +48,7 @@ export interface BrigadeConfig {
   stationCap: number;
   /** Cap of concurrent station subagents (`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`). */
   globalCap: number;
-  /** Daily usage cap in API-equivalent USD (ADR-015). 0 disables crew runs. */
+  /** Daily usage cap in API-equivalent USD (ADR-015). 0 disables the cap: no daily limit. */
   dailyCapUsd: number;
   /** `stationsHash()` of the station definitions last recorded as in use. */
   stationsHash: string | null;

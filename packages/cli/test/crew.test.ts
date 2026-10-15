@@ -195,7 +195,8 @@ describe('orderup crew status / set', () => {
     const io = fakeIo();
     await runCrew({ command: 'set', chefModel: null }, { ...d, io });
     expect(d.repository.getBrigadeConfig()).toMatchObject({ chefModel: null, stationCap: 2 });
-    expect(io.output()).toContain('crew runs are disabled');
+    expect(io.output()).toContain('budget      no daily cap; $0.00 used today');
+    expect(io.output()).not.toMatch(/disabled/);
   });
 
   it('refuses a repo that is not a git repo or not a directory, changing nothing', async () => {

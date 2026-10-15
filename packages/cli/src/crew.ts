@@ -43,7 +43,7 @@ Commands:
     --model <name>          head chef model (alias or full name), or "default"
     --station-cap <n>       cooks per station, soft limit in the chef's prompt (default 4)
     --global-cap <n>        concurrent station cooks in total (default 8)
-    --budget <usd>          daily usage cap in API-equivalent USD, 0 disables crew (default 5)
+    --budget <usd>          daily usage cap in API-equivalent USD, 0 for no cap (default 5)
   install-agents [--repo <path>]
                             fallback only: write the station subagents to .claude/agents/
                             (shows the diff and asks first). By default stations are passed
@@ -183,7 +183,7 @@ export function formatStatus(
     [
       'budget',
       config.dailyCapUsd === 0
-        ? `0: crew runs are disabled (${usd(spentToday)} used today)`
+        ? `no daily cap; ${usd(spentToday)} used today`
         : `${usd(config.dailyCapUsd)} per day, API-equivalent; ${usd(spentToday)} used today`,
     ],
     [
