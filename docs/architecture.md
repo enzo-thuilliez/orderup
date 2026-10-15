@@ -19,15 +19,15 @@ cli (npx orderup-cli): starts server → opens browser → offers hook install
 | `orderup-cli`    | Entry point: args, starts server, opens browser, installs/removes hooks   |
 | `orderup-web`    | Vite + three.js kitchen, cooks, props, camera, cook panel                 |
 
-## Cook kinds (ADR-008, ADR-015)
+## Cook kinds (ADR-008, ADR-015, ADR-016)
 
-|             | Observed                          | Crew (V1)                                 |
-| ----------- | --------------------------------- | ----------------------------------------- |
-| Source      | Any Claude Code session, any repo | The user's `claude` CLI, run headless     |
-| Identity    | `sessionId`, `agent: null`        | `sessionId` + `agent` (id, role, persona) |
-| Control     | Read-only                         | Commands: `crew.message`, `crew.spawn`    |
-| Token cost  | Zero                              | Spends the user's tokens                  |
-| Persistence | In memory (history later)         | `node:sqlite`                             |
+|             | Observed                          | Crew (V1)                                           |
+| ----------- | --------------------------------- | --------------------------------------------------- |
+| Source      | Any Claude Code session, any repo | The user's `claude` CLI, run headless               |
+| Identity    | `sessionId`, `agent: null`        | Head chef session or station subagent               |
+| Control     | Read-only                         | Commands to the head chef only; cooks are peeked at |
+| Token cost  | Zero                              | Spends the user's tokens                            |
+| Persistence | In memory (history later)         | `node:sqlite`                                       |
 
 Every session carries `cwd` and `repo` so the kitchen can group or label cooks by project.
 
@@ -212,12 +212,28 @@ checks on HTTP and WebSocket, and a per-launch secret before the command channel
 
 ## Crew (V1)
 
-Runtime, auth, billing, member definition, guardrails and the command channel threat model
-are decided in [ADR-015](../DECISIONS.md#adr-015-crew-runtime-auth-and-guardrails). In short:
-crew cooks are the user's own `claude` CLI spawned headless (`claude -p`, stream-json,
-`--resume`), OrderUp never touches credentials, crew is off unless started with `--crew`, and
-every member has an allowed tools list, a daily usage cap in API-equivalent USD, and a cost
-shown per run.
+Runtime, auth, billing, guardrails and the command channel threat model are decided in
+[ADR-015](../DECISIONS.md#adr-015-crew-runtime-auth-and-guardrails): crew runs as the user's
+own `claude` CLI spawned headless (`claude -p`, stream-json, `--resume`), OrderUp never
+touches credentials, crew is off unless started with `--crew`, and every run has a daily
+usage cap in API-equivalent USD and a cost shown per run.
+
+The brigade is decided in [ADR-016](../DECISIONS.md#adr-016-head-chef-and-brigade-model):
+
+- The runner launches one head chef session. The user talks only to the chef (`talk`,
+  `assign`, `stop`, card `approve` / `send-back`); no command prompts a cook.
+- Stations are fixed: `hot` (backend), `garde-manger` (frontend), `commis` (read-only
+  research), `pastry` (tests), `dish` (refactor). Each is a Claude Code subagent named
+  `orderup-<id>` (passed with `--agents`, or as files in `.claude/agents/` as a fallback),
+  identified in hooks by `agent_type`.
+- Writing stations run in their own git worktrees (`isolation: worktree`); the chef merges
+  their branches into the task branch and hands merge conflicts it cannot fix to the user.
+- Caps: 4 per station (soft, in the chef's prompt) and 8 in total
+  (`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`); ADR-015's usage cap stays the hard limit.
+- The chef ends each task with one fenced JSON report block; the runner turns it into a card
+  on the whiteboard (`cooking | ready | read | approved | sent-back`).
+- Clicking a cook opens a read-only peek built from hooks and transcripts, with no LLM call.
+- A theme only changes visuals, never station ids, prompts or tools.
 
 ## Kitchen (web)
 

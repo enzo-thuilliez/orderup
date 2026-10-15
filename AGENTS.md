@@ -12,8 +12,9 @@ Two kinds of cooks (ADR 008):
 
 - **Observed**: any Claude Code session on the machine. Read-only, zero token cost. OrderUp only
   reads hook events and local transcripts. It never calls an LLM on this path.
-- **Crew** (V1+): persistent roles the server runs as the user's own headless `claude` CLI
-  (ADR-015). They can be talked to and cost tokens.
+- **Crew** (V1+): a head chef the server runs as the user's own headless `claude` CLI
+  (ADR-015), with cooks at fixed stations run as Claude Code subagents (ADR-016). The user
+  talks only to the head chef; cooks can be peeked at, never prompted. Crew costs tokens.
 
 ## Kitchen metaphor
 

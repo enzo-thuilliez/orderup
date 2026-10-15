@@ -6,11 +6,12 @@ Watch every Claude Code session as a cook: hooks and transcript tail, the four s
 commis for subagents, the ticket rail. Orbit overview and first-person walk. `?demo` mode
 and a README GIF.
 
-## V1: A crew you can talk to
+## V1: A brigade you can talk to
 
-Persistent crew cooks run by the server through the user's own `claude` CLI (ADR-015).
-Walk up, press F and chat with them. Local SQLite for crew state and history. Command channel
-secured.
+A head chef run by the server through the user's own `claude` CLI (ADR-015), with cooks at
+fixed stations: hot, garde-manger, commis, pastry and dish (ADR-016). Walk up, press F and talk
+to the head chef; it dispatches the work and its reports land on a whiteboard at the pass.
+Peek at any cook read-only. Local SQLite for crew state and history. Command channel secured.
 
 ## V2: Scheduled crew
 
