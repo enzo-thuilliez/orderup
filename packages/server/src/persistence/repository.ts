@@ -38,6 +38,57 @@ export interface UsageTotal {
   costUsd: number;
 }
 
+/** The brigade's settings (ADR-016 point 9, #21). One per database. */
+export interface BrigadeConfig {
+  /** The working repo the head chef runs in, or null when not set. */
+  repoPath: string | null;
+  /** Model for the head chef, or null for the CLI's default. */
+  chefModel: string | null;
+  /** Soft cap of cooks per station, stated in the chef's prompt (ADR-016 point 4). */
+  stationCap: number;
+  /** Cap of concurrent station subagents (`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`). */
+  globalCap: number;
+  /** Daily usage cap in API-equivalent USD (ADR-015). 0 disables the cap: no daily limit. */
+  dailyCapUsd: number;
+  /** `stationsHash()` of the station definitions last recorded as in use. */
+  stationsHash: string | null;
+  /** Epoch ms of the last change, or null if never changed. */
+  updatedAt: number | null;
+}
+
+export type BrigadeConfigPatch = Partial<Omit<BrigadeConfig, 'updatedAt'>>;
+
+export const BRIGADE_DEFAULTS: Readonly<BrigadeConfig> = {
+  repoPath: null,
+  chefModel: null,
+  stationCap: 4,
+  globalCap: 8,
+  dailyCapUsd: 5,
+  stationsHash: null,
+  updatedAt: null,
+};
+
+const BRIGADE_COLUMNS = {
+  repoPath: 'repo_path',
+  chefModel: 'chef_model',
+  stationCap: 'station_cap',
+  globalCap: 'global_cap',
+  dailyCapUsd: 'daily_cap_usd',
+  stationsHash: 'stations_hash',
+} as const satisfies Record<keyof BrigadeConfigPatch, string>;
+
+function toBrigadeConfig(row: Row): BrigadeConfig {
+  return {
+    repoPath: str(row.repo_path),
+    chefModel: str(row.chef_model),
+    stationCap: num(row.station_cap),
+    globalCap: num(row.global_cap),
+    dailyCapUsd: num(row.daily_cap_usd),
+    stationsHash: str(row.stations_hash),
+    updatedAt: row.updated_at === null ? null : num(row.updated_at),
+  };
+}
+
 /** `YYYY-MM-DD` in local time: the user's day, which is what a daily cap means to them. */
 export function localDay(at: number): string {
   const date = new Date(at);
@@ -165,6 +216,30 @@ export class Repository {
       .prepare('SELECT * FROM usage WHERE run_id = ? ORDER BY recorded_at, id')
       .all(runId)
       .map(toUsage);
+  }
+
+  getBrigadeConfig(): BrigadeConfig {
+    const row = this.db.prepare('SELECT * FROM brigade_config WHERE id = 1').get();
+    return row ? toBrigadeConfig(row) : { ...BRIGADE_DEFAULTS };
+  }
+
+  /**
+   * Changes the given fields only. Validation of user input is the caller's job; the table's
+   * CHECK constraints reject a non-positive cap or a negative budget.
+   */
+  updateBrigadeConfig(patch: BrigadeConfigPatch, updatedAt = this.now()): BrigadeConfig {
+    const keys = (Object.keys(patch) as (keyof BrigadeConfigPatch)[]).filter(
+      (key) => key in BRIGADE_COLUMNS && patch[key] !== undefined,
+    );
+    if (keys.length > 0) {
+      const sets = keys.map((key) => `${BRIGADE_COLUMNS[key]} = ?`).join(', ');
+      // Migration 2 inserts the row; this only guards against someone deleting it.
+      this.db.prepare('INSERT OR IGNORE INTO brigade_config (id) VALUES (1)').run();
+      this.db
+        .prepare(`UPDATE brigade_config SET ${sets}, updated_at = ? WHERE id = 1`)
+        .run(...keys.map((key) => patch[key] ?? null), updatedAt);
+    }
+    return this.getBrigadeConfig();
   }
 
   /** Total for one local day (`YYYY-MM-DD`): what the daily budget cap is checked against. */

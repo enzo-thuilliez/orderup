@@ -2,6 +2,8 @@ import { spawn, type SpawnOptions } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_PORT, type HealthResponse } from 'orderup-shared';
+import { agentFilesStatus } from './agents.js';
+import { CREW_MIN_CLAUDE_VERSION, supportsCrew, type AuthStatus } from './claude.js';
 import { hookOptions } from './hooks.js';
 import { versionManagerOf } from './node-path.js';
 import { hasOurHooks, hookStatus, ourHooks, readSettings } from './settings.js';
@@ -127,6 +129,8 @@ export async function runDoctor(options: {
   port: number;
   /** Installed Claude Code version, from detectClaudeVersion(). */
   claude: string | null;
+  /** Also check crew readiness. */
+  crew?: CrewDoctorOptions;
   now?: () => number;
 }): Promise<DoctorReport> {
   const { file, claude, now = Date.now } = options;
@@ -139,6 +143,7 @@ export async function runDoctor(options: {
   if (claude) add('claude', 'ok', `Claude Code ${claude}`);
   else
     add('claude', 'warn', '`claude` not on PATH: hooks get installed in the most compatible form');
+  if (options.crew) checks.push(...(await crewChecks(options.crew)));
 
   let settings;
   try {
@@ -226,4 +231,70 @@ export function formatReport({ checks, ok }: DoctorReport): string {
       ? `No problems, ${plural(count('warn'), 'warning')}.`
       : 'All good.';
   return `OrderUp doctor\n\n${lines.join('\n')}\n\n${summary}\n`;
+}
+
+export interface CrewDoctorOptions {
+  /** Installed Claude Code version, from detectClaudeVersion(). */
+  claude: string | null;
+  /** `claude auth status`; only asked when the version supports crew. */
+  auth: () => Promise<AuthStatus>;
+  /** Repo whose `.claude/agents/` fallback files to check, or null to skip. */
+  repo: string | null;
+  /**
+   * Crew is set up (`--doctor --crew`, or a configured repo): its problems fail the report.
+   * Otherwise they are warnings, so an observer-only setup still passes.
+   */
+  required: boolean;
+}
+
+/** Crew readiness (ADR-015, ADR-016): the `claude` CLI, its version and login, station files. */
+export async function crewChecks(options: CrewDoctorOptions): Promise<Check[]> {
+  const { claude, required } = options;
+  const checks: Check[] = [];
+  const fail: Level = required ? 'FAIL' : 'warn';
+  const add = (level: Level, detail: string) => checks.push({ name: 'crew', level, detail });
+
+  if (!claude) {
+    add(fail, '`claude` is not on PATH: crew runs your own Claude Code CLI. Install Claude Code');
+  } else if (!supportsCrew(claude)) {
+    add(
+      fail,
+      `Claude Code ${claude} is too old for crew: it needs ${CREW_MIN_CLAUDE_VERSION} or ` +
+        'later. Fix: claude update',
+    );
+  } else {
+    add('ok', `Claude Code ${claude} supports crew (${CREW_MIN_CLAUDE_VERSION}+)`);
+  }
+
+  if (supportsCrew(claude)) {
+    const auth = await options.auth();
+    if (auth.loggedIn === true)
+      add('ok', `claude is logged in${auth.method ? ` (${auth.method})` : ''}`);
+    else if (auth.loggedIn === false)
+      add(fail, 'claude is not logged in. Fix: claude auth login, or set ANTHROPIC_API_KEY');
+    else add('warn', 'claude login status unknown: `claude auth status` gave no answer');
+  } else if (claude) {
+    add('warn', 'claude login status unknown: update Claude Code first');
+  }
+
+  if (options.repo) {
+    try {
+      const status = await agentFilesStatus(options.repo);
+      if (!status.installed) {
+        // The default: stations go to the chef with --agents, nothing in the repo.
+      } else if (status.current) {
+        add('ok', `station files in ${status.dir} match the current definitions`);
+      } else {
+        const stale = status.files.filter((f) => f.state !== 'current').map((f) => f.name);
+        add(
+          'warn',
+          `station files in ${status.dir} don't match the current definitions ` +
+            `(${stale.join(', ')}). Fix: orderup crew install-agents --repo ${options.repo}`,
+        );
+      }
+    } catch (err) {
+      add('warn', `can't read station files: ${(err as Error).message}`);
+    }
+  }
+  return checks;
 }

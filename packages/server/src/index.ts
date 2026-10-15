@@ -22,6 +22,21 @@ export {
   type TicketsMessage,
 } from './sources/tickets.js';
 export { TranscriptParser, TranscriptTail } from './sources/transcripts.js';
+export * from './persistence/index.js';
+export {
+  AGENT_FILE_MARKER,
+  agentFileHash,
+  agentFileName,
+  agentsJson,
+  agentsObject,
+  renderAgentFile,
+  STATION_DEFINITIONS,
+  stationOfAgent,
+  stationsHash,
+  type AgentJson,
+  type StationDefinition,
+  type StationTool,
+} from './crew/stations.js';
 
 const { version } = createRequire(import.meta.url)('../package.json') as { version: string };
 
@@ -36,12 +51,19 @@ export interface ServerOptions extends StoreOptions {
   webRoot?: string;
   /** Transcript directory to tail, or `false` to disable. Default: `~/.claude/projects`. */
   projectsDir?: string | false;
+  /**
+   * `orderup --crew`: crew is enabled for this run (ADR-015). Stored only: nothing runs crew
+   * yet (#19), and without it the server is the observer only.
+   */
+  crew?: boolean;
 }
 
 export interface RunningServer {
   url: string;
   port: number;
   store: SessionStore;
+  /** Whether crew was enabled with `--crew`. */
+  crew: boolean;
   close(): Promise<void>;
 }
 
@@ -90,6 +112,7 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
     url: `http://${HOST}:${port}`,
     port,
     store,
+    crew: options.crew === true,
     close: () => {
       clearInterval(ticker);
       tail?.stop();

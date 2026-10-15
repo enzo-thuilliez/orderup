@@ -8,8 +8,11 @@ export {
   type Migration,
 } from './db.js';
 export {
+  BRIGADE_DEFAULTS,
   localDay,
   Repository,
+  type BrigadeConfig,
+  type BrigadeConfigPatch,
   type Run,
   type RunStatus,
   type RunTrigger,
