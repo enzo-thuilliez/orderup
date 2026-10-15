@@ -9,6 +9,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- ADR-016: the V1 crew is a head chef plus fixed stations (hot, garde-manger, commis, pastry,
+  dish) run as Claude Code subagents. The user talks only to the head chef, reports land on a
+  whiteboard, and cooks can be peeked at read-only.
 - Wire protocol: crew types for V1 (`CrewMember`, `Ticket`, `talk` / `assign` / `stop`
   commands with `ack` / `error` replies, and `crew.run.*` / `crew.message.delta` events), plus
   an optional `crewMemberId` on sessions. Types only; nothing uses them yet.

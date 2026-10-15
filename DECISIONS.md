@@ -70,7 +70,7 @@ ones, supersede them instead.
 ## ADR-008: Observed cooks and crew cooks
 
 - **Status:** accepted (2026-09-25); implementation starts in V1; runtime superseded by
-  ADR-015
+  ADR-015; crew identity refined by ADR-016
 - **Context:** OrderUp starts as an observer, but the goal includes a crew of agents that
   users can talk to and that build OrderUp itself. The protocol and storage should not need
   a rewrite when control arrives.
@@ -83,6 +83,8 @@ ones, supersede them instead.
   - A client→server command channel is reserved in the protocol now (`crew.message`,
     `crew.spawn`). Until V1 the server answers `not_implemented`. Observed sessions never
     accept commands.
+  - _Refined by [ADR-016](#adr-016-head-chef-and-brigade-model): crew is a head chef plus
+    fixed stations, not free-form agents, and commands go to the head chef only._
   - Crew state and session history persist in a local SQLite database via `node:sqlite`.
     `engines` is `>=22.13` in every package: the first 22.x release where `node:sqlite`
     works without `--experimental-sqlite`. CI tests Node 22.13 and 24.
@@ -232,7 +234,8 @@ ones, supersede them instead.
 
 ## ADR-015: Crew runtime, auth and guardrails
 
-- **Status:** accepted (2026-09-29); supersedes the Agent SDK runtime in ADR-008
+- **Status:** accepted (2026-09-29); supersedes the Agent SDK runtime in ADR-008; crew member
+  model and concurrency refined by ADR-016
 - **Context:** ADR-008 planned to run crew cooks through the Claude Agent SDK. Its
   [docs](https://code.claude.com/docs/en/agent-sdk/overview) say that, unless previously
   approved, third-party products may not offer claude.ai login or rate limits and must use
@@ -257,6 +260,8 @@ ones, supersede them instead.
     duplicate observed ones (the tailer skip from ADR-008 uses the same list).
   - **Crew member.** `id`, `name`, `role`, `persona` (one line), working directory (a local
     repo path), `model`, allowed tools list, daily usage cap in API-equivalent USD.
+    _Refined by [ADR-016](#adr-016-head-chef-and-brigade-model): one head chef plus fixed
+    stations replace free-form members._
   - **Guardrails.** Defaults, all configurable:
     - Crew is disabled unless `orderup` is started with `--crew`.
     - The permission mode is never bypassed by default. Each member has an explicit allowed
@@ -265,7 +270,8 @@ ones, supersede them instead.
       subscription this is notional: it measures quota consumption, not money billed; with an
       API key or a future metered credit it is real spend): default 5, set to 0 to disable. A
       run is refused when the cap is reached and killed if it crosses the cap mid-run.
-    - Max turns per run: 30. Max concurrent members: 3.
+    - Max turns per run: 30. Max concurrent members: 3. _ADR-016: a member is one `claude -p`
+      process (the head chef); stations do not count._
     - Every child process is killed on server shutdown.
     - Crew never pushes to `main`: work happens on branches, and lands through PRs only.
   - **Command channel.** WebSocket commands (talk, assign, stop) run code on the user's
@@ -287,4 +293,184 @@ ones, supersede them instead.
   - OrderUp depends on the `claude` CLI's flags and stream-json output format.
     `orderup --doctor` pins a minimum version and fails below it.
   - Cost must be visible everywhere crew appears: per run, per member, per day.
-  - Issues #17 to #26 implement this ADR.
+  - Issues #17 to #26 implement this ADR, as refined by ADR-016.
+
+## ADR-016: Head chef and brigade model
+
+- **Status:** accepted (2026-10-15); refines the crew member model of ADR-008 and ADR-015.
+  ADR-015's runtime, auth, billing, budget cap and command channel stay as decided.
+- **Context:** ADR-015 described crew as free-form members the user chats with one by one.
+  That does not read well in the kitchen (any cook could be doing anything) and makes the user
+  manage every member. The V1 product decision (2026-10-15) is a brigade: the user talks only
+  to a head chef, who splits the work, dispatches it to cooks at fixed stations and collects
+  their reports on a whiteboard at the pass. This ADR decides how that runs on top of
+  ADR-015, what OrderUp can and cannot enforce, and what V1 stores. It is the contract for
+  #19, #20, #21, #22, #23, #26, #31 and #36.
+- **Decision:**
+  - **1. Runtime: one head chef session, stations as subagents.** The runner launches only
+    the head chef, as one `claude -p` session exactly as in ADR-015 (stream-json,
+    `--resume`, the user's own CLI and credentials). Each station is a Claude Code
+    [subagent](https://code.claude.com/docs/en/sub-agents) shipped as a Markdown file in the
+    working repo's `.claude/agents/` (one file per station: frontmatter `name`,
+    `description`, `tools`, then the station prompt). The chef dispatches work with the
+    `Agent` tool; Claude Code runs the subagents, in parallel when the chef asks for it. The
+    runner never passes `--bare`, because bare mode skips `.claude/agents/`
+    ([headless docs](https://code.claude.com/docs/en/headless#start-faster-with-bare-mode)).
+    `orderup crew` installs and updates the station files after showing a diff and asking
+    for confirmation, like the hooks install (#21).
+  - **2. Stations: a fixed enum with stable ids.** The ids are the wire values (#36) and never
+    change. The subagent file and its frontmatter `name` are `orderup-<id>` so they cannot
+    clash with the user's own subagents. Tool lists are Claude Code tool names.
+
+    | Id             | Purpose                                                                                                             | Allowed tools                                                                  | Writes files                          |
+    | -------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------- |
+    | `head-chef`    | Orchestrator: reads the task, splits it, dispatches to stations, owns the branch and the PR, writes the report card | `Agent` (station types only), `Read`, `Grep`, `Glob`, `Bash` (git and `gh pr`) | No source edits; git and PR only      |
+    | `hot`          | Backend / API: server code, protocol, CLI                                                                           | `Read`, `Grep`, `Glob`, `Edit`, `Write`, `Bash`                                | Yes                                   |
+    | `garde-manger` | Frontend / UI: web, scene, styles                                                                                   | `Read`, `Grep`, `Glob`, `Edit`, `Write`, `Bash`                                | Yes                                   |
+    | `commis`       | Research and code reading: answers questions, maps code, prepares context for other stations                        | `Read`, `Grep`, `Glob`                                                         | No (read-only tools only, no `Bash`)  |
+    | `pastry`       | Tests / QA: writes and runs tests, lint, typecheck; reports failures                                                | `Read`, `Grep`, `Glob`, `Edit`, `Write`, `Bash`                                | Yes, tests and fixtures only (prompt) |
+    | `dish`         | Refactor / cleanup: renames, dead code, formatting, small refactors without behaviour change                        | `Read`, `Grep`, `Glob`, `Edit`, `Write`, `Bash`                                | Yes                                   |
+
+    `head-chef` is the main session, not a subagent file: its tools are set by the runner's
+    permission flags. No station gets the `Agent` tool, and the runner sets
+    `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1` so stations cannot spawn cooks of their own
+    ([sub-agents docs](https://code.claude.com/docs/en/sub-agents)). "Tests and fixtures
+    only" for `pastry` is an instruction in its prompt, not something the tool list can
+    enforce. Every station inherits ADR-015's rules: permissions are never bypassed and
+    nothing is pushed to `main`.
+
+  - **3. Theme split.** A kitchen theme only changes visuals: the dish, the gesture, the props
+    and the palette. Station ids, prompts, tools and caps never depend on the theme. V1 ships
+    one theme, the Chinese kitchen gestures (#22). One kitchen per repo with a theme dropdown
+    (#33) and the full Chinese theme kit (#34) are out of scope for V1.
+  - **4. Concurrency: what OrderUp can enforce.** Several cooks may work at the same station.
+    Targets: 4 per station, 8 in total.
+    - With option A, subagent parallelism happens inside Claude Code, not in OrderUp. The
+      per-station cap of 4 is an instruction in the head chef's prompt, so it is a **soft
+      limit**: OrderUp shows it when the chef exceeds it but cannot prevent it.
+    - The global cap of 8 is passed to the chef process as
+      `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=8`; Claude Code then refuses the next `Agent`
+      call with `Concurrent subagent limit reached`
+      ([sub-agents docs](https://code.claude.com/docs/en/sub-agents)). This is enforced by
+      Claude Code, not by OrderUp, and depends on the user's CLI version, so OrderUp treats
+      it as best effort and also states the cap in the chef's prompt.
+    - The **hard limit** stays ADR-015's: the daily usage cap is checked before each run and
+      the runner kills the chef process (and with it every station) when a run crosses it,
+      plus max 30 turns per run.
+    - ADR-015's "max 3 concurrent members" now counts `claude -p` processes. The head chef
+      is one member; stations are not members and do not count. V1 runs one head chef per
+      kitchen, so the limit is met by construction and stays as a guard for later (#33).
+  - **5. Report card.** Every chef run is tied to a task id chosen by the server and given
+    to the chef in its prompt. The chef's final message for a task must contain exactly one
+    fenced code block with the info string `json` matching this schema (version 1):
+
+        ```json
+        {
+          "schema": 1,
+          "taskId": "t_01J…",
+          "ticket": { "repo": "owner/name", "number": 31 },
+          "stations": ["hot", "pastry"],
+          "summary": "One paragraph, plain text, at most 600 characters.",
+          "prUrl": "https://github.com/owner/name/pull/42",
+          "filesChanged": ["packages/server/src/board.ts"]
+        }
+        ```
+
+        `ticket` and `prUrl` are `null` when there is none; `stations` holds station ids other
+        than `head-chef`; `filesChanged` holds repo-relative paths. The runner parses the block
+        from the run's final result. Card statuses are exactly `cooking | ready | read |
+
+    approved | sent-back`:
+    - `cooking`: created when a task starts (an `assign`, or a `send-back`resuming one).
+      \-`ready`: the run ended. This is when the "Order up!" bell rings and the browser
+      notification fires (#31).
+    - `read`: the user opened the card. `approved`/`sent-back`: the user's decision.
+    - A `talk`that ends with a report block also creates a card, directly as`ready`; a
+      `talk`without one is plain conversation.
+    - If the block is missing, appears more than once, is not valid JSON, fails the schema or
+      names a different`taskId`, the card is still created (or moved) as `ready`with
+      `malformed: true`and the chef's raw final text, so nothing is lost. A run that ends
+      with an error or a stop also ends as`ready`, with its run status on the card.
+
+  - **6. Talking: the chef only.** Every command goes to the head chef: `talk`, `assign`,
+    `stop`, and the card actions `approve` and `send-back`. No command prompts a cook, and a
+    command naming any other station is rejected (#20, #36). `send-back` resumes the chef's
+    session with the card id and the user's comment, and moves the card back to `cooking`.
+    `approve` only records the decision and starts no run: it spends no tokens and never
+    merges anything.
+  - **7. Peek.** Clicking a cook opens a read-only view built from hook events and
+    transcripts, the same sources as observed cooks: current tool and target, files touched
+    (from `tool_input` paths), and the last few assistant messages. It makes no LLM call and
+    sends no command. Peek data lives in memory only. Prompt text is never stored or
+    broadcast: not the user's prompts, and not the `prompt` input of the chef's `Agent`
+    calls (the dispatch is shown by its short `description` only).
+  - **8. Identifying stations.** Documented fields are enough; no extra protocol is needed
+    in the chef's output:
+    - Hooks fired inside a subagent carry the common fields `agent_id` and `agent_type`;
+      `agent_type` is the subagent's frontmatter `name`, so `orderup-hot` maps to `hot`
+      ([hooks: common input fields](https://code.claude.com/docs/en/hooks#common-input-fields)).
+    - `SubagentStart` carries `agent_id` and `agent_type`; `SubagentStop` adds
+      `agent_transcript_path` and `last_assistant_message`
+      ([SubagentStart](https://code.claude.com/docs/en/hooks#subagentstart-input),
+      [SubagentStop](https://code.claude.com/docs/en/hooks#subagentstop-input)).
+    - The chef's `Agent` tool call has `tool_input.subagent_type`, and its `tool_response`
+      carries `agentId`, for foreground and background runs
+      ([hooks: PreToolUse input](https://code.claude.com/docs/en/hooks#pretooluse-input)).
+      The runner also sees these `tool_use` blocks in its own stream-json output, where
+      subagent messages carry `parent_tool_use_id`
+      ([headless: follow subagent messages](https://code.claude.com/docs/en/headless#follow-subagent-messages)).
+    - Subagent transcripts are stored as
+      `~/.claude/projects/{project}/{sessionId}/subagents/agent-{agentId}.jsonl`
+      ([sub-agents docs](https://code.claude.com/docs/en/sub-agents)). The docs do not name a
+      field inside a transcript line that holds the agent type, so the station of a
+      transcript comes from its `agentId` (file name) joined with the hook or stream data
+      above, never from the transcript alone.
+    - Fallback: when no `agent_type` arrives (older CLI, or a dropped hook), the runner uses
+      the `subagent_type` → `agentId` pair from its own stream. When neither is known, or the
+      type is not an `orderup-*` station (for example the built-in `Explore`), the cook is
+      shown as an unassigned commis cook next to the chef, exactly like observed subagents
+      today. `SubagentStop` events with an empty `agent_type` (Claude Code's internal agents)
+      are ignored. All of these fields are optional in OrderUp, as with every hook field.
+  - **9. Persisted entities (node:sqlite).** V1 stores the following. #17 builds the
+    database, migrations, runs and usage; #31 builds the report cards; the rest land with
+    the issue named.
+    - `runs`: one row per `claude -p` invocation of the chef: id, chef session id, task id,
+      trigger (`talk`, `assign`, `send-back`), start and end time, status (#17, #19).
+    - `usage`: tokens and API-equivalent USD per run, rolled up per day for the cap (#17).
+    - `chef_messages`: the head chef conversation: what the user typed in OrderUp's chat and
+      the chef's final replies, so history survives a restart (#23). This is text the user
+      typed into OrderUp, not prompt text read from hooks or transcripts.
+    - `report_cards`: one per task: task id, ticket ref, stations, summary, PR URL, files
+      changed, status, `malformed` flag with the raw text when malformed, run status,
+      timestamps (#31).
+    - `card_events`: status changes of a card with who/when, and the user's comment for
+      `send-back` (#31).
+    - `owned_sessions`: the chef session ids and subagent `agentId`s the runner owns, so
+      those cooks render as crew and the tailer skips them (ADR-015) (#19).
+    - `brigade_config`: working repo, chef model, per-station and global caps, daily usage
+      cap, and the version/hash of the installed station files (#21).
+    - Not stored: peek data, hook payloads, transcript content, prompts.
+
+- **Alternatives considered:**
+  - **Option B: one `claude -p` process per station, dispatched by the server.** Gives
+    OrderUp hard per-station concurrency and budget, and lets cooks talk to each other. It
+    also means OrderUp writes its own scheduler, splits tasks itself or through an extra
+    chef process, and multiplies processes against ADR-015's limit of 3. Deferred: it is
+    only needed for cooks talking to each other (#35), which is not in V1.
+  - Station definitions passed per run with the CLI's `--agents` flag instead of files in
+    `.claude/agents/`: leaves the user's repo untouched, but the definitions are invisible
+    to the user and cannot be reviewed as a diff. Kept as an open question for #21.
+  - Free-form members as in ADR-015: rejected for V1, see Context.
+  - The chef announcing each dispatch in a parseable line: not needed, documented hook and
+    stream fields identify stations (point 8). Revisit if they disappear.
+- **Consequences:**
+  - The protocol types from #29 change: free-form `CrewMember` and `memberId` go away in
+    favour of stations and the chef (#36).
+  - OrderUp now also depends on Claude Code's subagent file format, the `Agent` tool and the
+    `agent_id` / `agent_type` hook fields. `orderup --doctor` checks the CLI version and the
+    installed station files.
+  - Per-station caps are soft. Users who need hard per-station limits wait for option B.
+  - The cost of a run includes its stations; it is shown per run and per day, not per
+    station, in V1.
+  - The station files live in the user's repo, so installing them is a visible, confirmed
+    change, like the hooks.
