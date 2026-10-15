@@ -13,6 +13,14 @@ import { attachWebSocket } from './ws.js';
 export { reduce, type SessionEvent } from './sessions/machine.js';
 export { SessionStore, type StoreChange } from './sessions/store.js';
 export { normalizeHook } from './sources/hooks.js';
+export {
+  TicketSource,
+  execGh,
+  parseIssueList,
+  type ExecFn,
+  type TicketSourceOptions,
+  type TicketsMessage,
+} from './sources/tickets.js';
 export { TranscriptParser, TranscriptTail } from './sources/transcripts.js';
 
 const { version } = createRequire(import.meta.url)('../package.json') as { version: string };

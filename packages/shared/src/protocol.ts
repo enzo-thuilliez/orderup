@@ -458,7 +458,26 @@ export type CrewEvent =
     }
   | { type: 'crew.card.created'; card: ReportCard }
   | { type: 'crew.card.updated'; card: ReportCard }
-  | { type: 'crew.peek'; peek: CookPeek };
+  | { type: 'crew.peek'; peek: CookPeek }
+  | {
+      type: 'crew.tickets';
+      /** Open issues of the brigade's repos, the last good list when a poll fails. */
+      tickets: Ticket[];
+      status: TicketSourceStatus;
+      /** Short reason when `status` is not `ok`, else `null`. */
+      message: string | null;
+      /** Epoch ms of the last successful poll, or `null` before the first one. */
+      updatedAt: number | null;
+    };
+
+/**
+ * Health of the GitHub ticket source (`gh issue list`):
+ * - `ok`: the last poll succeeded
+ * - `gh-missing`: the `gh` CLI is not installed or not on PATH
+ * - `unauthenticated`: `gh` is not logged in
+ * - `error`: anything else (network, timeout, unexpected output)
+ */
+export type TicketSourceStatus = 'ok' | 'gh-missing' | 'unauthenticated' | 'error';
 
 /** Every crew message the server may send. Kept apart from `ServerMessage` until V1 wires it. */
 export type CrewServerMessage = CrewCommandReply | CrewEvent;
