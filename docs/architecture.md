@@ -27,7 +27,7 @@ cli (npx orderup-cli): starts server → opens browser → offers hook install
 | Identity    | `sessionId`, `agent: null`        | Head chef session or station subagent               |
 | Control     | Read-only                         | Commands to the head chef only; cooks are peeked at |
 | Token cost  | Zero                              | Spends the user's tokens                            |
-| Persistence | In memory (history later)         | `node:sqlite`                                       |
+| Persistence | In memory (history later)         | `node:sqlite` at `~/.orderup/orderup.db`            |
 
 Every session carries `cwd` and `repo` so the kitchen can group or label cooks by project.
 
@@ -234,6 +234,28 @@ The brigade is decided in [ADR-016](../DECISIONS.md#adr-016-head-chef-and-brigad
   on the whiteboard (`cooking | ready | read | approved | sent-back`).
 - Clicking a cook opens a read-only peek built from hooks and transcripts, with no LLM call.
 - A theme only changes visuals, never station ids, prompts or tools.
+
+### Persistence
+
+Crew state lives in `~/.orderup/orderup.db` (follows `$HOME`), opened with `node:sqlite`
+by `packages/server/src/persistence`. Nothing opens it yet: the observer path never touches
+it, and the crew runner (#19) is its first user.
+
+- Migrations are an append-only list. `schema_version` records each applied version; pending
+  ones run in order, each in its own transaction, so re-running is a no-op and a failure
+  leaves the previous version intact. A database newer than the running OrderUp is refused.
+- `node:sqlite` is loaded lazily, and only its own `ExperimentalWarning` is dropped while it
+  loads (Node 22 prints it); every other warning is left alone (ADR-008).
+- Tables so far (ADR-016 point 9):
+
+| Table   | Columns                                                                                                                                                           |
+| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `runs`  | `id`, `chef_session_id`, `task_id`, `trigger` (`talk` / `assign` / `send-back`), `started_at`, `ended_at`, `status` (`running` / `success` / `error` / `stopped`) |
+| `usage` | `run_id`, input / output / cache read / cache write tokens, `cost_usd` (API-equivalent), `day` (local `YYYY-MM-DD`), `recorded_at`                                |
+
+`Repository.usageTotalForDay(day)` sums `usage` for one local day: the figure the daily
+budget cap is checked against. `chef_messages`, `report_cards`, `card_events`,
+`owned_sessions` and `brigade_config` arrive as new migrations with #23, #31, #19 and #21.
 
 ## Kitchen (web)
 

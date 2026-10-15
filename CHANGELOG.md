@@ -15,6 +15,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Wire protocol: crew types for V1 (`CrewMember`, `Ticket`, `talk` / `assign` / `stop`
   commands with `ack` / `error` replies, and `crew.run.*` / `crew.message.delta` events), plus
   an optional `crewMemberId` on sessions. Types only; nothing uses them yet.
+- Server: crew persistence in `~/.orderup/orderup.db` with `node:sqlite` (no new dependency):
+  versioned migrations, `runs` and `usage` tables and a per-day usage total for the budget cap.
+  Not used by the running server yet.
 
 ## [0.1.0] - 2026-09-27
 
