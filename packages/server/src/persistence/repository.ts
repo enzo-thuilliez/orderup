@@ -56,6 +56,17 @@ export interface BrigadeConfig {
   updatedAt: number | null;
 }
 
+/** A session the crew runner owns (ADR-016 point 9): the chef's, or a station subagent's. */
+export interface OwnedSession {
+  kind: 'chef' | 'subagent';
+  /** Chef: the session id. Subagent: its `agentId`. */
+  id: string;
+  runId: string | null;
+  /** Subagent only: its name (`orderup-hot`, or a non-OrderUp type), when known. */
+  agentType: string | null;
+  recordedAt: number;
+}
+
 export type BrigadeConfigPatch = Partial<Omit<BrigadeConfig, 'updatedAt'>>;
 
 export const BRIGADE_DEFAULTS: Readonly<BrigadeConfig> = {
@@ -111,6 +122,16 @@ function toRun(row: Row): Run {
     startedAt: num(row.started_at),
     endedAt: row.ended_at === null ? null : num(row.ended_at),
     status: row.status as RunStatus,
+  };
+}
+
+function toOwned(row: Row): OwnedSession {
+  return {
+    kind: row.kind as OwnedSession['kind'],
+    id: String(row.id),
+    runId: str(row.run_id),
+    agentType: str(row.agent_type),
+    recordedAt: num(row.recorded_at),
   };
 }
 
@@ -218,6 +239,57 @@ export class Repository {
       .map(toUsage);
   }
 
+  /**
+   * Sum of the usage recorded for every run of one chef session. A resumed run reports the
+   * conversation's whole cost (headless docs), so the runner subtracts this to get its own.
+   */
+  usageTotalForSession(chefSessionId: string): UsageTotal {
+    return this.usageTotal(
+      'run_id IN (SELECT id FROM runs WHERE chef_session_id = ?)',
+      chefSessionId,
+    );
+  }
+
+  /** Records a session the runner owns. Recording the same one again keeps the first row. */
+  addOwnedSession(owned: {
+    kind: OwnedSession['kind'];
+    id: string;
+    runId?: string | null;
+    agentType?: string | null;
+    recordedAt?: number;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO owned_sessions (kind, id, run_id, agent_type, recorded_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(
+        owned.kind,
+        owned.id,
+        owned.runId ?? null,
+        owned.agentType ?? null,
+        owned.recordedAt ?? this.now(),
+      );
+  }
+
+  /** The owned session or subagent with this id, if any. */
+  getOwnedSession(id: string, kind?: OwnedSession['kind']): OwnedSession | undefined {
+    const row = kind
+      ? this.db.prepare('SELECT * FROM owned_sessions WHERE kind = ? AND id = ?').get(kind, id)
+      : this.db.prepare('SELECT * FROM owned_sessions WHERE id = ? ORDER BY kind').get(id);
+    return row ? toOwned(row) : undefined;
+  }
+
+  /** Owned sessions, oldest first, optionally of one kind. */
+  ownedSessions(kind?: OwnedSession['kind']): OwnedSession[] {
+    const rows = kind
+      ? this.db
+          .prepare('SELECT * FROM owned_sessions WHERE kind = ? ORDER BY recorded_at, rowid')
+          .all(kind)
+      : this.db.prepare('SELECT * FROM owned_sessions ORDER BY recorded_at, rowid').all();
+    return rows.map(toOwned);
+  }
+
   getBrigadeConfig(): BrigadeConfig {
     const row = this.db.prepare('SELECT * FROM brigade_config WHERE id = 1').get();
     return row ? toBrigadeConfig(row) : { ...BRIGADE_DEFAULTS };
@@ -244,6 +316,10 @@ export class Repository {
 
   /** Total for one local day (`YYYY-MM-DD`): what the daily budget cap is checked against. */
   usageTotalForDay(day: string): UsageTotal {
+    return this.usageTotal('day = ?', day);
+  }
+
+  private usageTotal(where: string, param: string): UsageTotal {
     const row = this.db
       .prepare(
         `SELECT COALESCE(SUM(input_tokens), 0) AS input,
@@ -251,9 +327,9 @@ export class Repository {
                 COALESCE(SUM(cache_read_tokens), 0) AS cache_read,
                 COALESCE(SUM(cache_write_tokens), 0) AS cache_write,
                 COALESCE(SUM(cost_usd), 0) AS cost_usd
-         FROM usage WHERE day = ?`,
+         FROM usage WHERE ${where}`,
       )
-      .get(day);
+      .get(param);
     return {
       tokens: {
         input: num(row?.input),

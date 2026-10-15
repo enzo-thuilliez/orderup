@@ -50,7 +50,13 @@ describe('database', () => {
     expect(existsSync(file)).toBe(true);
     expect(schemaVersion(db)).toBe(MIGRATIONS.at(-1)!.version);
     // The other ADR-016 tables land with their own issues.
-    expect(tables(db)).toEqual(['brigade_config', 'runs', 'schema_version', 'usage']);
+    expect(tables(db)).toEqual([
+      'brigade_config',
+      'owned_sessions',
+      'runs',
+      'schema_version',
+      'usage',
+    ]);
   });
 
   it('re-running migrations is a no-op', () => {
@@ -266,7 +272,7 @@ describe('brigade_config (migration 2)', () => {
     v1.close();
 
     const db = track(openDatabase(file));
-    expect(schemaVersion(db)).toBe(2);
+    expect(schemaVersion(db)).toBe(MIGRATIONS.at(-1)!.version);
     const repo = new Repository(db);
     expect(repo.getRun('r1')?.trigger).toBe('talk');
     expect(repo.getBrigadeConfig()).toEqual(BRIGADE_DEFAULTS);
@@ -276,5 +282,49 @@ describe('brigade_config (migration 2)', () => {
 describe('localDay', () => {
   it('formats the local calendar day', () => {
     expect(localDay(new Date(2026, 0, 5, 23, 59).getTime())).toBe('2026-01-05');
+  });
+});
+
+describe('owned_sessions (migration 3)', () => {
+  function setup() {
+    const db = track(openDatabase(tempDb()));
+    return { repo: new Repository(db, () => 1000), db };
+  }
+
+  it('records chef sessions and subagents once, keyed by kind and id', () => {
+    const { repo } = setup();
+    repo.startRun({ id: 'r1', trigger: 'assign', taskId: 't1' });
+    repo.addOwnedSession({ kind: 'chef', id: 's1', runId: 'r1' });
+    repo.addOwnedSession({ kind: 'subagent', id: 'a1', runId: 'r1', agentType: 'orderup-hot' });
+    repo.addOwnedSession({ kind: 'chef', id: 's1', runId: 'r1', recordedAt: 5 });
+
+    expect(repo.ownedSessions()).toEqual([
+      { kind: 'chef', id: 's1', runId: 'r1', agentType: null, recordedAt: 1000 },
+      { kind: 'subagent', id: 'a1', runId: 'r1', agentType: 'orderup-hot', recordedAt: 1000 },
+    ]);
+    expect(repo.ownedSessions('subagent').map((s) => s.id)).toEqual(['a1']);
+    expect(repo.getOwnedSession('a1')?.agentType).toBe('orderup-hot');
+    expect(repo.getOwnedSession('s1', 'subagent')).toBeUndefined();
+    expect(repo.getOwnedSession('nope')).toBeUndefined();
+  });
+
+  it('keeps ownership when its run is deleted', () => {
+    const { repo, db } = setup();
+    repo.startRun({ id: 'r1', trigger: 'talk' });
+    repo.addOwnedSession({ kind: 'chef', id: 's1', runId: 'r1' });
+    db.exec("DELETE FROM runs WHERE id = 'r1'");
+    expect(repo.getOwnedSession('s1')?.runId).toBeNull();
+  });
+
+  it('totals usage per chef session across its runs', () => {
+    const { repo } = setup();
+    repo.startRun({ id: 'r1', trigger: 'assign', chefSessionId: 's1' });
+    repo.startRun({ id: 'r2', trigger: 'send-back', chefSessionId: 's1' });
+    repo.startRun({ id: 'r3', trigger: 'talk', chefSessionId: 's2' });
+    repo.addUsage({ runId: 'r1', costUsd: 1 });
+    repo.addUsage({ runId: 'r2', costUsd: 0.5 });
+    repo.addUsage({ runId: 'r3', costUsd: 9 });
+    expect(repo.usageTotalForSession('s1').costUsd).toBe(1.5);
+    expect(repo.usageTotalForSession('none').costUsd).toBe(0);
   });
 });

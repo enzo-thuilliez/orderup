@@ -4,7 +4,9 @@ import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { DEFAULT_PORT } from 'orderup-shared';
+import { CrewRunner, type RunnerOptions } from './crew/runner.js';
 import { createGuard, createRequestHandler } from './http.js';
+import { openDatabase, Repository } from './persistence/index.js';
 import { SessionStore, type StoreOptions } from './sessions/store.js';
 import { normalizeHook } from './sources/hooks.js';
 import { TranscriptTail } from './sources/transcripts.js';
@@ -37,6 +39,32 @@ export {
   type StationDefinition,
   type StationTool,
 } from './crew/stations.js';
+export {
+  buildChefArgs,
+  buildChefEnv,
+  CrewRunner,
+  MAX_CONCURRENT_RUNS,
+  MAX_SUBAGENT_SPAWN_DEPTH,
+  MAX_TURNS,
+  type RunnerEvent,
+  type RunnerOptions,
+  type StartRunOptions,
+  type StartRunRefusal,
+  type StartRunResult,
+} from './crew/runner.js';
+export { parseStreamLine, type StreamEvent } from './crew/stream.js';
+export {
+  chefWorktreePath,
+  defaultBranch,
+  ensureChefWorktree,
+  hooksDir,
+  installPushGuard,
+  isValidTaskId,
+  PRE_PUSH_HOOK,
+  removeChefWorktree,
+  taskBranch,
+  type ChefWorktree,
+} from './crew/worktree.js';
 
 const { version } = createRequire(import.meta.url)('../package.json') as { version: string };
 
@@ -52,10 +80,15 @@ export interface ServerOptions extends StoreOptions {
   /** Transcript directory to tail, or `false` to disable. Default: `~/.claude/projects`. */
   projectsDir?: string | false;
   /**
-   * `orderup --crew`: crew is enabled for this run (ADR-015). Stored only: nothing runs crew
-   * yet (#19), and without it the server is the observer only.
+   * `orderup --crew`: crew is enabled for this run (ADR-015). It opens the crew database and
+   * a `CrewRunner`, which nothing starts runs on yet (#20). Without it the server is the
+   * observer only and never opens the database.
    */
   crew?: boolean;
+  /** Crew only: the database file (default `~/.orderup/orderup.db`). */
+  dbPath?: string;
+  /** Crew only: runner options such as the `claude` binary, for tests. */
+  runner?: Omit<RunnerOptions, 'repository'>;
 }
 
 export interface RunningServer {
@@ -64,6 +97,8 @@ export interface RunningServer {
   store: SessionStore;
   /** Whether crew was enabled with `--crew`. */
   crew: boolean;
+  /** The crew runner, or null without `--crew`. `close()` stops all its runs. */
+  runner: CrewRunner | null;
   close(): Promise<void>;
 }
 
@@ -108,14 +143,23 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
   const ticker = setInterval(() => store.tick(), 15_000);
   ticker.unref();
 
+  const crewDb = options.crew ? openDatabase(options.dbPath) : null;
+  const runner = crewDb
+    ? new CrewRunner({ ...options.runner, repository: new Repository(crewDb) })
+    : null;
+
   return {
     url: `http://${HOST}:${port}`,
     port,
     store,
     crew: options.crew === true,
-    close: () => {
+    runner,
+    close: async () => {
       clearInterval(ticker);
       tail?.stop();
+      // No orphans (ADR-015): every chef process and its group is gone before we return.
+      await runner?.stopAll();
+      crewDb?.close();
       socket.close();
       server.closeAllConnections();
       return new Promise((resolve, reject) =>
