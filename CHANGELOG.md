@@ -21,11 +21,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Server: crew persistence in `~/.orderup/orderup.db` with `node:sqlite` (no new dependency):
   versioned migrations, `runs` and `usage` tables and a per-day usage total for the budget cap.
   Not used by the running server yet.
+- Server: GitHub ticket source that polls `gh issue list` for each brigade repo, keeps the
+  last good list when `gh` is missing, logged out or failing, and reports its status in a new
+  `crew.tickets` message. Not started by the server yet.
 - CLI: brigade config with `orderup crew status` and `orderup crew set` (`--repo`, `--model`,
   `--station-cap`, `--global-cap`, `--budget`), saved in a new `brigade_config` table; station
-  definitions as data with their `--agents` JSON and hash; opt-in `orderup crew
-install-agents` / `uninstall-agents` for `.claude/agents/` fallback files (diff and
-  confirmation first); a `--crew` start flag (stored only, no runner yet); and crew checks in
+  definitions as data with their `--agents` JSON and hash; opt-in
+  `orderup crew install-agents` / `uninstall-agents` for `.claude/agents/` fallback files (diff
+  and confirmation first); a `--crew` start flag (stored only, no runner yet); and crew checks in
   `orderup --doctor` (Claude Code 2.1.217+, login, station files).
 
 ## [0.1.0] - 2026-09-27

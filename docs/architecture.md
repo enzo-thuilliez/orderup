@@ -248,7 +248,8 @@ Types only for now: nothing sends them yet, so they live in their own unions (`C
 - **Events** (server → client, broadcast): `crew.run.started { runId, sessionId, trigger,
 taskId }`, `crew.message.delta`, `crew.run.ended { status, usage }`,
   `crew.budget.exceeded { runId, capUsd, spentUsd }`, `crew.card.created` and
-  `crew.card.updated { card }`, and `crew.peek { peek }`.
+  `crew.card.updated { card }`, `crew.peek { peek }`, and
+  `crew.tickets { tickets, status, message, updatedAt }` (see Tickets below).
 - **Peek** (`CookPeek`): station, crew state, current tool and target, files touched, the
   last few assistant messages and, for a station, the `description` of the dispatching
   `Agent` call. It is built in memory from hooks and transcripts. No type carries prompt
@@ -283,6 +284,27 @@ The brigade is decided in [ADR-016](../DECISIONS.md#adr-016-head-chef-and-brigad
   on the whiteboard (`cooking | ready | read | approved | sent-back`).
 - Clicking a cook opens a read-only peek built from hooks and transcripts, with no LLM call.
 - A theme only changes visuals, never station ids, prompts or tools.
+
+### Tickets
+
+`packages/server/src/sources/tickets.ts` (`TicketSource`) turns open GitHub issues into order
+tickets. It takes the brigade's repos as `owner/name` (one brigade per working repo, ADR-016)
+and, for each, runs `gh issue list --repo <owner/name> --state open --json
+number,title,labels,url,updatedAt --limit 100` with `execFile` (no shell, args as an array,
+15 s timeout). A repo that does not match `owner/name` or starts with `-` is never passed to
+gh: it is skipped and reported as an `error` status naming it.
+It polls at start and then 60 s (configurable) after the previous poll ends, so polls never
+overlap; `stop()` clears the timer. Each repo's issues are kept in memory, most recently
+updated first.
+
+- Failures never throw. Each repo keeps its last good list and the source reports a
+  `TicketSourceStatus`: `gh-missing` (`ENOENT`), `unauthenticated` (exit 4 or a "gh auth login"
+  hint), or `error` (network, timeout, non-zero exit, invalid JSON), with a short fixed message
+  that never echoes gh's output or environment. Back to `ok` after a clean poll.
+- It logs one line per status change, not per poll.
+- Its state is the `crew.tickets` message. It is not started yet: the crew runner (#19) and
+  crew config (#21) wire it behind `--crew`, and the ticket rail (#25) shows it. The observer
+  path never runs `gh`.
 
 ### Station definitions
 
