@@ -133,7 +133,10 @@ session data.
 ## CLI
 
 `orderup` (`packages/cli`) parses flags, then either acts on hooks and exits
-(`--install-hooks`, `--uninstall-hooks`, `--doctor`) or starts the server:
+(`--install-hooks`, `--uninstall-hooks`, `--doctor`), runs an `orderup crew` command (see
+[Brigade config](#brigade-config-orderup-crew)) or starts the server. `--crew` is stored in
+the server options (`ServerOptions.crew`); nothing runs crew yet (#19), and without it the
+server is the observer only:
 
 1. Starts the server on `127.0.0.1:<port>` (default 7717), serving the built kitchen:
    `dist/web/` next to the bundled CLI in the npm package, or `packages/web/dist` in the monorepo. If the port
@@ -193,8 +196,22 @@ any check fails.
 | `server`   | `GET /health` answers on the hooks' port                                                              |
 | `events`   | `lastHookAt` from `/health`: when the last hook payload arrived                                       |
 | `delivery` | runs the installed `PreToolUse` command with an `OrderUpDoctor` event, then checks `lastHookAt` moved |
+| `crew`     | `claude` on PATH, version 2.1.217+, logged in, fallback station files up to date (below)              |
 
 `OrderUpDoctor` is not a Claude Code event, so the server accepts it and changes no session.
+
+The `crew` lines fail the report only when crew is set up (`orderup --doctor --crew`, or a
+repo set with `orderup crew set --repo`); otherwise they are warnings, so an observer-only
+setup still passes.
+
+- Version: below 2.1.217, the first release with `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`
+  (ADR-016 Follow-ups), the check fails with `Fix: claude update`.
+- Login: `claude auth status`, the documented non-interactive check (exit 0 logged in, 1
+  not). Only its `authMethod` field is read. Any other outcome, or a CLI too old to ask,
+  reports "unknown" rather than guessing. It is never run below 2.1.217.
+- Station files: in the configured repo, else the current directory's git repo. Checked only
+  when an `orderup-<station>.md` file exists; a stale or missing one is a warning.
+- The database is read only if `~/.orderup/orderup.db` already exists: the doctor creates none.
 
 ## Wire protocol
 
@@ -267,11 +284,50 @@ The brigade is decided in [ADR-016](../DECISIONS.md#adr-016-head-chef-and-brigad
 - Clicking a cook opens a read-only peek built from hooks and transcripts, with no LLM call.
 - A theme only changes visuals, never station ids, prompts or tools.
 
+### Station definitions
+
+`packages/server/src/crew/stations.ts` holds the five stations as data (`STATION_DEFINITIONS`):
+subagent name `orderup-<id>`, description, tools from ADR-016 point 2, `isolation: worktree`
+for `hot`, `garde-manger`, `pastry` and `dish`, and a short station prompt. Writing stations
+are told to commit on their worktree branch and end with a `Branch: <branch>` line; `pastry`
+edits tests and fixtures only; no station pushes. No station gets `Agent`.
+
+- `agentsJson()` builds the value of the claude CLI's `--agents` flag (inline JSON, keyed by
+  subagent name, with `description`, `prompt`, `tools` and `isolation`). This is the default
+  runtime path: the runner (#19) passes it to the head chef and nothing is written into the
+  user's repo.
+- `stationsHash()` is the SHA-256 of that JSON. It is stored in `brigade_config` when the CLI
+  writes the config and written into fallback files, so stale definitions can be detected.
+- `renderAgentFile()` renders a definition as a `.claude/agents/orderup-<id>.md` file (YAML
+  frontmatter with an OrderUp marker comment and the hash, then the prompt) for the fallback.
+
+### Brigade config (`orderup crew`)
+
+| Command                                                                                         | What                                                                     |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `orderup crew status`                                                                           | config, stations, caps, daily budget and what was used today             |
+| `orderup crew set --repo <path>`                                                                | working repo of the head chef: must be a git repo, stored as its top     |
+| `orderup crew set --model <name>`                                                               | chef model (alias or full name); `default` goes back to the CLI's        |
+| `orderup crew set --station-cap <n>` / `--global-cap <n>`                                       | positive integers (defaults 4 and 8)                                     |
+| `orderup crew set --budget <usd>`                                                               | daily usage cap, API-equivalent USD, `>= 0` (default 5; 0 disables crew) |
+| `orderup crew install-agents [--repo <path>]` / `orderup crew uninstall-agents [--repo <path>]` | fallback station files (below)                                           |
+
+`set` takes several flags at once and validates all of them before writing anything. The
+config goes to `brigade_config` in the database.
+
+`install-agents` and `uninstall-agents` are the opt-in fallback of ADR-016 point 1. They act
+on `--repo`, else the configured repo, else the current directory (a git repo either way),
+and follow the hook installer's UX (ADR-006): a diff per file, then one y/N question in a
+terminal (without one, the explicit command is the confirmation). Only the five
+`.claude/agents/orderup-<station>.md` files are read, written or removed; other files,
+including other `orderup-*` names, are never touched, and a symlink or non-file in their
+place is refused. When every file already matches, nothing is asked or written.
+
 ### Persistence
 
 Crew state lives in `~/.orderup/orderup.db` (follows `$HOME`), opened with `node:sqlite`
-by `packages/server/src/persistence`. Nothing opens it yet: the observer path never touches
-it, and the crew runner (#19) is its first user.
+by `packages/server/src/persistence`. The observer path never touches it; `orderup crew`
+opens it for the brigade config, and the crew runner (#19) will be its main user.
 
 - Migrations are an append-only list. `schema_version` records each applied version; pending
   ones run in order, each in its own transaction, so re-running is a no-op and a failure
@@ -280,14 +336,16 @@ it, and the crew runner (#19) is its first user.
   loads (Node 22 prints it); every other warning is left alone (ADR-008).
 - Tables so far (ADR-016 point 9):
 
-| Table   | Columns                                                                                                                                                           |
-| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `runs`  | `id`, `chef_session_id`, `task_id`, `trigger` (`talk` / `assign` / `send-back`), `started_at`, `ended_at`, `status` (`running` / `success` / `error` / `stopped`) |
-| `usage` | `run_id`, input / output / cache read / cache write tokens, `cost_usd` (API-equivalent), `day` (local `YYYY-MM-DD`), `recorded_at`                                |
+| Table                          | Columns                                                                                                                                                                                               |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `runs`                         | `id`, `chef_session_id`, `task_id`, `trigger` (`talk` / `assign` / `send-back`), `started_at`, `ended_at`, `status` (`running` / `success` / `error` / `stopped`)                                     |
+| `usage`                        | `run_id`, input / output / cache read / cache write tokens, `cost_usd` (API-equivalent), `day` (local `YYYY-MM-DD`), `recorded_at`                                                                    |
+| `brigade_config` (migration 2) | one row: `repo_path`, `chef_model` (both NULL until set), `station_cap` (4), `global_cap` (8), `daily_cap_usd` (5), `stations_hash`, `updated_at`; caps `> 0` and budget `>= 0` are CHECK constraints |
 
 `Repository.usageTotalForDay(day)` sums `usage` for one local day: the figure the daily
-budget cap is checked against. `chef_messages`, `report_cards`, `card_events`,
-`owned_sessions` and `brigade_config` arrive as new migrations with #23, #31, #19 and #21.
+budget cap is checked against. `getBrigadeConfig()` and `updateBrigadeConfig(patch)` read
+and change `brigade_config` (only the fields given). `chef_messages`, `report_cards`,
+`card_events` and `owned_sessions` arrive as new migrations with #23, #31 and #19.
 
 ## Kitchen (web)
 

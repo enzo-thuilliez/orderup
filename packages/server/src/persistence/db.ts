@@ -5,8 +5,8 @@ import type { DatabaseSync } from 'node:sqlite';
 
 /**
  * Crew persistence (ADR-008, ADR-016 point 9): one SQLite file through `node:sqlite`, with
- * versioned migrations. This PR (#17) creates `runs` and `usage` only; the other ADR-016
- * tables arrive with the issues that use them, as new migrations appended below.
+ * versioned migrations. #17 created `runs` and `usage`, #21 `brigade_config`; the other
+ * ADR-016 tables arrive with the issues that use them, as new migrations appended below.
  */
 
 export type Database = DatabaseSync;
@@ -51,6 +51,23 @@ export const MIGRATIONS: readonly Migration[] = [
       );
       CREATE INDEX usage_run_id ON usage (run_id);
       CREATE INDEX usage_day ON usage (day);
+    `,
+  },
+  {
+    // #21: one row, the brigade's settings. NULL repo and model mean "not set".
+    version: 2,
+    sql: `
+      CREATE TABLE brigade_config (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        repo_path TEXT,
+        chef_model TEXT,
+        station_cap INTEGER NOT NULL DEFAULT 4 CHECK (station_cap > 0),
+        global_cap INTEGER NOT NULL DEFAULT 8 CHECK (global_cap > 0),
+        daily_cap_usd REAL NOT NULL DEFAULT 5 CHECK (daily_cap_usd >= 0),
+        stations_hash TEXT,
+        updated_at INTEGER
+      );
+      INSERT INTO brigade_config (id) VALUES (1);
     `,
   },
 ];

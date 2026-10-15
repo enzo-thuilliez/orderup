@@ -4,9 +4,17 @@ import path from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_PORT } from 'orderup-shared';
-import { startServer, type RunningServer } from 'orderup-server';
+import {
+  defaultDbPath,
+  openDatabase,
+  Repository,
+  startServer,
+  type RunningServer,
+} from 'orderup-server';
 import { helpText, parseCliArgs, type CliOptions } from './args.js';
 import { openBrowser } from './browser.js';
+import { claudeAuthStatus, gitToplevel } from './claude.js';
+import { parseCrewArgs, runCrew } from './crew.js';
 import { fetchHealth, formatReport, nodeCheck, runDoctor } from './doctor.js';
 import { detectClaudeVersion, installHooks, uninstallHooks, type Io } from './hooks.js';
 import { hookStatus, readSettings, settingsPath } from './settings.js';
@@ -95,6 +103,7 @@ async function start(
       port: options.port,
       webRoot,
       allowedOrigins: options.dev ? [VITE_DEV_ORIGIN] : [],
+      crew: options.crew,
     });
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw err;
@@ -108,7 +117,33 @@ async function start(
   }
 }
 
+/** The configured crew repo, read only when the database already exists (doctor creates none). */
+function configuredRepo(): string | null {
+  const file = defaultDbPath();
+  if (!existsSync(file)) return null;
+  const db = openDatabase(file);
+  try {
+    return new Repository(db).getBrigadeConfig().repoPath;
+  } finally {
+    db.close();
+  }
+}
+
+function terminalIo(): Io {
+  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  return {
+    out: (text) => void process.stdout.write(text),
+    confirm: interactive ? confirm : undefined,
+    color: interactive && !process.env.NO_COLOR,
+  };
+}
+
 async function main(argv: string[]): Promise<void> {
+  if (argv[0] === 'crew') {
+    const args = parseCrewArgs(argv.slice(1));
+    process.exitCode = await runCrew(args, { io: terminalIo(), gitToplevel });
+    return;
+  }
   const options = parseCliArgs(argv);
   if (options.help) {
     process.stdout.write(helpText(version));
@@ -119,12 +154,7 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
 
-  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
-  const io: Io = {
-    out: (text) => void process.stdout.write(text),
-    confirm: interactive ? confirm : undefined,
-    color: interactive && !process.env.NO_COLOR,
-  };
+  const io = terminalIo();
   const file = settingsPath();
 
   if (options.installHooks) {
@@ -136,10 +166,23 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
   if (options.doctor) {
+    const claude = await detectClaudeVersion();
+    let repo: string | null = null;
+    try {
+      repo = configuredRepo();
+    } catch {
+      // An unreadable database only skips the configured repo; the crew line says the rest.
+    }
     const report = await runDoctor({
       file,
       port: options.port,
-      claude: await detectClaudeVersion(),
+      claude,
+      crew: {
+        claude,
+        auth: claudeAuthStatus,
+        repo: repo ?? (await gitToplevel(process.cwd())),
+        required: options.crew || repo !== null,
+      },
     });
     io.out(formatReport(report));
     process.exitCode = report.ok ? 0 : 1;

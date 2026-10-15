@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  BRIGADE_DEFAULTS,
   defaultDbPath,
   localDay,
   migrate,
@@ -48,8 +49,8 @@ describe('database', () => {
     const db = track(openDatabase());
     expect(existsSync(file)).toBe(true);
     expect(schemaVersion(db)).toBe(MIGRATIONS.at(-1)!.version);
-    // Only runs and usage: the other ADR-016 tables land with their own issues.
-    expect(tables(db)).toEqual(['runs', 'schema_version', 'usage']);
+    // The other ADR-016 tables land with their own issues.
+    expect(tables(db)).toEqual(['brigade_config', 'runs', 'schema_version', 'usage']);
   });
 
   it('re-running migrations is a no-op', () => {
@@ -187,6 +188,88 @@ describe('Repository', () => {
       tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       costUsd: 0,
     });
+  });
+});
+
+describe('brigade_config (migration 2)', () => {
+  function setup() {
+    let now = 1000;
+    const db = track(openDatabase(tempDb()));
+    return { repo: new Repository(db, () => now), db, setNow: (t: number) => (now = t) };
+  }
+
+  it('starts with the ADR-016 defaults', () => {
+    const { repo } = setup();
+    expect(repo.getBrigadeConfig()).toEqual({
+      repoPath: null,
+      chefModel: null,
+      stationCap: 4,
+      globalCap: 8,
+      dailyCapUsd: 5,
+      stationsHash: null,
+      updatedAt: null,
+    });
+    expect(repo.getBrigadeConfig()).toEqual(BRIGADE_DEFAULTS);
+  });
+
+  it('updates only the fields given, and stamps the change', () => {
+    const { repo, setNow } = setup();
+    setNow(2000);
+    expect(repo.updateBrigadeConfig({ stationCap: 2, repoPath: '/work/repo' })).toMatchObject({
+      repoPath: '/work/repo',
+      stationCap: 2,
+      globalCap: 8,
+      dailyCapUsd: 5,
+      updatedAt: 2000,
+    });
+    repo.updateBrigadeConfig({
+      chefModel: 'opus',
+      globalCap: 3,
+      dailyCapUsd: 0,
+      stationsHash: 'abc',
+    });
+    expect(repo.getBrigadeConfig()).toEqual({
+      repoPath: '/work/repo',
+      chefModel: 'opus',
+      stationCap: 2,
+      globalCap: 3,
+      dailyCapUsd: 0,
+      stationsHash: 'abc',
+      updatedAt: 2000,
+    });
+    // null clears a nullable field; an empty patch changes nothing.
+    repo.updateBrigadeConfig({ chefModel: null });
+    expect(repo.getBrigadeConfig().chefModel).toBeNull();
+    setNow(3000);
+    expect(repo.updateBrigadeConfig({}).updatedAt).toBe(2000);
+  });
+
+  it('rejects a non-positive cap or a negative budget, leaving the row as it was', () => {
+    const { repo } = setup();
+    expect(() => repo.updateBrigadeConfig({ stationCap: 0 })).toThrow();
+    expect(() => repo.updateBrigadeConfig({ globalCap: -1 })).toThrow();
+    expect(() => repo.updateBrigadeConfig({ dailyCapUsd: -0.5 })).toThrow();
+    expect(repo.getBrigadeConfig()).toEqual(BRIGADE_DEFAULTS);
+  });
+
+  it('keeps a single row', () => {
+    const { db } = setup();
+    expect(() => db.exec('INSERT INTO brigade_config (id) VALUES (2)')).toThrow();
+  });
+
+  it('migrates a version 1 database without touching its runs', () => {
+    const file = tempDb();
+    const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
+    const v1 = new DatabaseSync(file);
+    migrate(v1, MIGRATIONS.slice(0, 1));
+    new Repository(v1).startRun({ id: 'r1', trigger: 'talk', startedAt: 1 });
+    v1.close();
+
+    const db = track(openDatabase(file));
+    expect(schemaVersion(db)).toBe(2);
+    const repo = new Repository(db);
+    expect(repo.getRun('r1')?.trigger).toBe('talk');
+    expect(repo.getBrigadeConfig()).toEqual(BRIGADE_DEFAULTS);
   });
 });
 
