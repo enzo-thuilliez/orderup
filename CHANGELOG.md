@@ -30,6 +30,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `orderup crew install-agents` / `uninstall-agents` for `.claude/agents/` fallback files (diff
   and confirmation first); a `--crew` start flag (stored only, no runner yet); and crew checks in
   `orderup --doctor` (Claude Code 2.1.217+, login, station files).
+- Server: authenticated crew command channel. With `--crew`, a fresh per-start token is
+  written to `~/.orderup/command-token` (`0600`) and injected into the kitchen page; every
+  crew command must pass the Host/Origin checks, the token and `parseCrewCommand`, within 10
+  per second per connection (else a new `rate_limited` error code), before it reaches a
+  `CrewController`. The stub controller answers
+  `crew_disabled` until the runner lands; without `--crew` every crew command gets
+  `crew_disabled`.
 - Server: crew runner core. With `--crew` the server can run the head chef as your own
   `claude -p` (stream-json, stations via `--agents`, max 30 turns) in a per-task git worktree
   under `~/.orderup/worktrees`, with a push guard that refuses the default branch for the chef

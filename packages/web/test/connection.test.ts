@@ -1,6 +1,12 @@
-import type { ServerMessage } from 'orderup-shared';
+import { COMMAND_TOKEN_META, type ServerMessage } from 'orderup-shared';
 import { describe, expect, it } from 'vitest';
-import { Connection, reconnectDelay, socketUrl, type SocketLike } from '../src/net/connection';
+import {
+  Connection,
+  readCommandToken,
+  reconnectDelay,
+  socketUrl,
+  type SocketLike,
+} from '../src/net/connection';
 import type { ConnectionStatus } from '../src/net/store';
 
 class FakeSocket implements SocketLike {
@@ -33,7 +39,7 @@ class FakeSocket implements SocketLike {
   }
 }
 
-function setup() {
+function setup(commandToken: string | null = null) {
   const sockets: FakeSocket[] = [];
   const timers: { fn: () => void; ms: number }[] = [];
   const statuses: ConnectionStatus[] = [];
@@ -42,6 +48,7 @@ function setup() {
     url: 'ws://127.0.0.1:7717/ws',
     onMessage: (m) => messages.push(m),
     onStatus: (s) => statuses.push(s),
+    commandToken,
     createSocket: (url) => {
       const s = new FakeSocket(url);
       sockets.push(s);
@@ -118,5 +125,45 @@ describe('Connection', () => {
     conn.stop();
     expect(sockets[0]!.closed).toBe(true);
     expect(timers).toHaveLength(0);
+  });
+});
+
+describe('crew command token', () => {
+  const page = (content: string | null) => ({
+    querySelector: (selector: string) =>
+      content !== null && selector === `meta[name="${COMMAND_TOKEN_META}"]`
+        ? ({ content } as unknown as Element)
+        : null,
+  });
+
+  it('reads the token the server injected, or null without --crew', () => {
+    expect(readCommandToken(page('abc123') as never)).toBe('abc123');
+    expect(readCommandToken(page('') as never)).toBeNull();
+    expect(readCommandToken(page(null) as never)).toBeNull();
+  });
+
+  it('attaches the token to crew commands', () => {
+    const { conn, sockets } = setup('abc123');
+    conn.start();
+    sockets[0]!.open();
+    expect(conn.sendCrew({ type: 'stop', requestId: 'r1', to: 'head-chef' })).toBe(true);
+    expect(JSON.parse(sockets[0]!.sent[0]!)).toEqual({
+      type: 'stop',
+      requestId: 'r1',
+      to: 'head-chef',
+      token: 'abc123',
+    });
+  });
+
+  it('sends no crew command without a token or an open socket', () => {
+    const { conn, sockets } = setup(null);
+    conn.start();
+    sockets[0]!.open();
+    expect(conn.sendCrew({ type: 'stop', requestId: 'r1', to: 'head-chef' })).toBe(false);
+    expect(sockets[0]!.sent).toEqual([]);
+
+    const withToken = setup('abc123');
+    withToken.conn.start();
+    expect(withToken.conn.sendCrew({ type: 'stop', requestId: 'r1', to: 'head-chef' })).toBe(false);
   });
 });
