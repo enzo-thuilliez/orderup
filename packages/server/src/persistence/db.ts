@@ -5,7 +5,7 @@ import type { DatabaseSync } from 'node:sqlite';
 
 /**
  * Crew persistence (ADR-008, ADR-016 point 9): one SQLite file through `node:sqlite`, with
- * versioned migrations. #17 created `runs` and `usage`, #21 `brigade_config`; the other
+ * versioned migrations. #17 created `runs` and `usage`, #21 `brigade_config`, #19 `owned_sessions`; the other
  * ADR-016 tables arrive with the issues that use them, as new migrations appended below.
  */
 
@@ -68,6 +68,23 @@ export const MIGRATIONS: readonly Migration[] = [
         updated_at INTEGER
       );
       INSERT INTO brigade_config (id) VALUES (1);
+    `,
+  },
+  {
+    // #19: the chef sessions and station subagents the runner started (ADR-015, ADR-016
+    // point 9), so they render as crew cooks and the tailer skips them. `id` is a session id
+    // for `chef` and an `agentId` for `subagent`; `agent_type` is the subagent's name.
+    version: 3,
+    sql: `
+      CREATE TABLE owned_sessions (
+        kind TEXT NOT NULL CHECK (kind IN ('chef', 'subagent')),
+        id TEXT NOT NULL,
+        run_id TEXT REFERENCES runs (id) ON DELETE SET NULL,
+        agent_type TEXT,
+        recorded_at INTEGER NOT NULL,
+        PRIMARY KEY (kind, id)
+      );
+      CREATE INDEX owned_sessions_id ON owned_sessions (id);
     `,
   },
 ];

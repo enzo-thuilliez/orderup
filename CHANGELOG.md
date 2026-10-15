@@ -37,6 +37,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `CrewController`. The stub controller answers
   `crew_disabled` until the runner lands; without `--crew` every crew command gets
   `crew_disabled`.
+- Server: crew runner core. With `--crew` the server can run the head chef as your own
+  `claude -p` (stream-json, stations via `--agents`, max 30 turns) in a per-task git worktree
+  under `~/.orderup/worktrees`, with a push guard that refuses the default branch for the chef
+  only, at most 3 chef processes, the daily usage cap enforced before and during a run, and no
+  child left behind on close. Run usage and owned sessions are saved (new `owned_sessions`
+  table). Not reachable from the kitchen yet (#20).
 
 ## [0.1.0] - 2026-09-27
 

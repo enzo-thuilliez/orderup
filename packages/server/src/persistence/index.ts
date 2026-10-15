@@ -13,6 +13,7 @@ export {
   Repository,
   type BrigadeConfig,
   type BrigadeConfigPatch,
+  type OwnedSession,
   type Run,
   type RunStatus,
   type RunTrigger,

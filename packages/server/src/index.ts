@@ -5,8 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { DEFAULT_PORT } from 'orderup-shared';
 import { DisabledCrewController, type CrewController } from './crew/controller.js';
+import { CrewRunner, type RunnerOptions } from './crew/runner.js';
 import { defaultTokenPath, generateToken, removeTokenFile, writeTokenFile } from './crew/token.js';
 import { createGuard, createRequestHandler } from './http.js';
+import { openDatabase, Repository } from './persistence/index.js';
 import { SessionStore, type StoreOptions } from './sessions/store.js';
 import { normalizeHook } from './sources/hooks.js';
 import { TranscriptTail } from './sources/transcripts.js';
@@ -48,6 +50,33 @@ export {
 } from './crew/controller.js';
 export { CREW_RATE_LIMIT } from './crew/channel.js';
 export { defaultTokenPath } from './crew/token.js';
+export {
+  buildChefArgs,
+  buildChefEnv,
+  CrewRunner,
+  MAX_CONCURRENT_RUNS,
+  MAX_SUBAGENT_SPAWN_DEPTH,
+  MAX_TURNS,
+  MIN_BUDGET_USD,
+  type RunnerEvent,
+  type RunnerOptions,
+  type StartRunOptions,
+  type StartRunRefusal,
+  type StartRunResult,
+} from './crew/runner.js';
+export { parseStreamLine, type StreamEvent } from './crew/stream.js';
+export {
+  chefWorktreePath,
+  defaultBranch,
+  ensureChefWorktree,
+  hooksDir,
+  installPushGuard,
+  isValidTaskId,
+  PRE_PUSH_HOOK,
+  removeChefWorktree,
+  taskBranch,
+  type ChefWorktree,
+} from './crew/worktree.js';
 
 const { version } = createRequire(import.meta.url)('../package.json') as { version: string };
 
@@ -64,14 +93,20 @@ export interface ServerOptions extends StoreOptions {
   projectsDir?: string | false;
   /**
    * `orderup --crew`: enables the authenticated command channel (ADR-015). The server writes a
-   * fresh token to `commandTokenFile` and injects it into the kitchen page. Without it every
-   * crew command gets `crew_disabled` and the server is the observer only.
+   * fresh token to `commandTokenFile` and injects it into the kitchen page. It also opens the
+   * crew database and a `CrewRunner`, which the controller does not drive yet (#19). Without it
+   * every crew command gets `crew_disabled`, the server is the observer only and never opens
+   * the database.
    */
   crew?: boolean;
   /** Handles authorized crew commands. Default: `DisabledCrewController` until #19. */
   crewController?: CrewController;
   /** Default: `~/.orderup/command-token`. */
   commandTokenFile?: string;
+  /** Crew only: the database file (default `~/.orderup/orderup.db`). */
+  dbPath?: string;
+  /** Crew only: runner options such as the `claude` binary, for tests. */
+  runner?: Omit<RunnerOptions, 'repository'>;
 }
 
 export interface RunningServer {
@@ -80,6 +115,8 @@ export interface RunningServer {
   store: SessionStore;
   /** Whether crew was enabled with `--crew`. */
   crew: boolean;
+  /** The crew runner, or null without `--crew`. `close()` stops all its runs. */
+  runner: CrewRunner | null;
   close(): Promise<void>;
 }
 
@@ -144,14 +181,23 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
   const ticker = setInterval(() => store.tick(), 15_000);
   ticker.unref();
 
+  const crewDb = options.crew ? openDatabase(options.dbPath) : null;
+  const runner = crewDb
+    ? new CrewRunner({ ...options.runner, repository: new Repository(crewDb) })
+    : null;
+
   return {
     url: `http://${HOST}:${port}`,
     port,
     store,
     crew: options.crew === true,
-    close: () => {
+    runner,
+    close: async () => {
       clearInterval(ticker);
       tail?.stop();
+      // No orphans (ADR-015): every chef process and its group is gone before we return.
+      await runner?.stopAll();
+      crewDb?.close();
       socket.close();
       if (crewToken !== null) removeTokenFile(tokenFile, crewToken);
       server.closeAllConnections();

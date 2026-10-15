@@ -355,6 +355,63 @@ edits tests and fixtures only; no station pushes. No station gets `Agent`.
 - `renderAgentFile()` renders a definition as a `.claude/agents/orderup-<id>.md` file (YAML
   frontmatter with an OrderUp marker comment and the hash, then the prompt) for the fallback.
 
+### Crew runner
+
+`packages/server/src/crew/runner.ts` (`CrewRunner`) runs the head chef (#19). Started only
+with `--crew`: `startServer` then opens the database and a runner, and `close()` awaits
+`stopAll()`. Nothing starts runs yet: the command channel (#20) still uses
+`DisabledCrewController`; a controller backed by the runner comes in step 2 of #19.
+
+- **API.** `startRun({ trigger, taskId, prompt, resumeSessionId? })` resolves `{ ok, runId }`
+  or a refusal: `busy` (already 3 chef processes, ADR-015, or this task already has one),
+  `usage_cap_reached`, `no_repo`, `invalid` (task id not `[A-Za-z0-9_-]+`, a session id or
+  model that could read as a flag) or `setup_failed`. `stop(runId)` and `stopAll()` resolve
+  once the processes are gone. Progress goes to `onEvent`: `run.started`, `run.session`,
+  `run.text` (the chef's own text), `run.tool` (with `subagentType` and `description` for
+  `Agent` calls, never their `prompt`), `run.subagent` (an `agentId` and its station),
+  `run.ended { status, usage, resultText }` and `budget.exceeded`.
+- **Process.** The user's `claude` (path injectable), spawned without a shell in its own
+  process group, in the task's chef worktree:
+  `-p --output-format stream-json --verbose --max-turns 30 --agents <agentsJson()>
+--settings {"worktree":{"baseRef":"head"}}`, plus `--model` when `brigade_config` has one,
+  `--resume <id>` when given and `--max-budget-usd <daily_cap_usd minus today's usage>`
+  (whole cents, rounded down, at least 0.01) when the daily cap is on; with a cap of 0 the
+  flag is omitted. Never `--bare`, never a permission-bypass flag. The prompt goes on stdin, so it is
+  neither parsed as a flag nor visible in the process list. stderr is dropped.
+- **Environment.** `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` = `brigade_config.global_cap`,
+  `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1`, and the push guard: `GIT_CONFIG_COUNT=1`,
+  `GIT_CONFIG_KEY_0=core.hooksPath`, `GIT_CONFIG_VALUE_0=~/.orderup/git-hooks` and
+  `ORDERUP_PROTECTED_BRANCH=<default branch>`. Inherited `GIT_CONFIG_KEY_n` / `VALUE_n` and
+  `GIT_CONFIG_PARAMETERS` are dropped.
+- **Push guard.** The runner writes `~/.orderup/git-hooks/pre-push`, which refuses any push
+  or deletion of `ORDERUP_PROTECTED_BRANCH` or of the remote's HEAD branch (`main` and
+  `master` when neither is known). Only the chef process (and the stations, which inherit its
+  environment) has that `core.hooksPath`; the user's own pushes never run it, and nothing is
+  written into the repo's `.git/hooks`. While it is set, the repo's own hooks do not run for
+  the chef.
+- **Chef worktree.** One per task, at `~/.orderup/worktrees/<repo-basename>/<taskId>`, on a
+  new branch `orderup/<taskId>` from the repo's default branch (`origin/HEAD`, else `main` or
+  `master`). A later run of the task (`send-back`) reuses it, only if it belongs to the same
+  repo. `removeChefWorktree()` removes the worktree and the branch once the card is approved or
+  sent back (callers: #31). The user's checkout is never switched or written to.
+- **Stream.** `crew/stream.ts` (`parseStreamLine`) maps stream-json lines to typed events:
+  `system/init` (session id), assistant `text` and `tool_use` blocks (`Agent` / `Task` with
+  `subagent_type`), `tool_result` (with `tool_use_result.agentId` when present),
+  `stream_event` text deltas and `result` (`total_cost_usd`, `usage`). Malformed or unknown
+  lines give no event and never end a run.
+- **Usage and budget.** Each `result` line adds a `usage` row for the run. A resumed session
+  reports the conversation's whole cost, so what that chef session already recorded is
+  subtracted. A start is refused when today's total is at or over `daily_cap_usd` (0 = no
+  cap); a run whose result takes the day over the cap is killed and reported with
+  `budget.exceeded`. It ends as `usage_cap_reached`, stored as `stopped` in `runs`.
+- **Status.** `success` (exit 0 with a non-error result), `stopped`, `usage_cap_reached`,
+  else `error` (non-zero exit, no result, binary missing).
+- **Shutdown.** A stop sends SIGTERM to the chef's process group, then SIGKILL after 3 s;
+  when the chef exits, anything left in its group is killed. `stopAll()` runs on server close,
+  and a synchronous `exit` handler kills the groups if the server dies without it. On Windows
+  only the chef process itself is signalled.
+- **Ownership.** The chef's session id and each subagent `agentId` go to `owned_sessions`.
+
 ### Brigade config (`orderup crew`)
 
 | Command                                                                                         | What                                                                                        |
@@ -381,7 +438,7 @@ place is refused. When every file already matches, nothing is asked or written.
 
 Crew state lives in `~/.orderup/orderup.db` (follows `$HOME`), opened with `node:sqlite`
 by `packages/server/src/persistence`. The observer path never touches it; `orderup crew`
-opens it for the brigade config, and the crew runner (#19) will be its main user.
+opens it for the brigade config, and the server opens it with `--crew` for the crew runner.
 
 - Migrations are an append-only list. `schema_version` records each applied version; pending
   ones run in order, each in its own transaction, so re-running is a no-op and a failure
@@ -395,11 +452,14 @@ opens it for the brigade config, and the crew runner (#19) will be its main user
 | `runs`                         | `id`, `chef_session_id`, `task_id`, `trigger` (`talk` / `assign` / `send-back`), `started_at`, `ended_at`, `status` (`running` / `success` / `error` / `stopped`)                                                       |
 | `usage`                        | `run_id`, input / output / cache read / cache write tokens, `cost_usd` (API-equivalent), `day` (local `YYYY-MM-DD`), `recorded_at`                                                                                      |
 | `brigade_config` (migration 2) | one row: `repo_path`, `chef_model` (both NULL until set), `station_cap` (4), `global_cap` (8), `daily_cap_usd` (5; 0 = no daily cap), `stations_hash`, `updated_at`; caps `> 0` and budget `>= 0` are CHECK constraints |
+| `owned_sessions` (migration 3) | `kind` (`chef` / `subagent`), `id` (session id or `agentId`), `run_id`, `agent_type`, `recorded_at`; one row per `(kind, id)`                                                                                           |
 
 `Repository.usageTotalForDay(day)` sums `usage` for one local day: the figure the daily
 budget cap is checked against. `getBrigadeConfig()` and `updateBrigadeConfig(patch)` read
 and change `brigade_config` (only the fields given). `chef_messages`, `report_cards`,
-`card_events` and `owned_sessions` arrive as new migrations with #23, #31 and #19.
+`card_events` arrive as new migrations with #23 and #31. `addOwnedSession`, `getOwnedSession`
+and `ownedSessions` read and write `owned_sessions`; `usageTotalForSession` sums a chef
+session's usage across its runs.
 
 ## Kitchen (web)
 
