@@ -223,8 +223,11 @@ The brigade is decided in [ADR-016](../DECISIONS.md#adr-016-head-chef-and-brigad
 - The runner launches one head chef session. The user talks only to the chef (`talk`,
   `assign`, `stop`, card `approve` / `send-back`); no command prompts a cook.
 - Stations are fixed: `hot` (backend), `garde-manger` (frontend), `commis` (read-only
-  research), `pastry` (tests), `dish` (refactor). Each is a Claude Code subagent file
-  `.claude/agents/orderup-<id>.md`, identified in hooks by `agent_type`.
+  research), `pastry` (tests), `dish` (refactor). Each is a Claude Code subagent named
+  `orderup-<id>` (passed with `--agents`, or as files in `.claude/agents/` as a fallback),
+  identified in hooks by `agent_type`.
+- Writing stations run in their own git worktrees (`isolation: worktree`); the chef merges
+  their branches into the task branch and hands merge conflicts it cannot fix to the user.
 - Caps: 4 per station (soft, in the chef's prompt) and 8 in total
   (`CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`); ADR-015's usage cap stays the hard limit.
 - The chef ends each task with one fenced JSON report block; the runner turns it into a card

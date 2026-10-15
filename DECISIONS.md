@@ -310,28 +310,29 @@ ones, supersede them instead.
   - **1. Runtime: one head chef session, stations as subagents.** The runner launches only
     the head chef, as one `claude -p` session exactly as in ADR-015 (stream-json,
     `--resume`, the user's own CLI and credentials). Each station is a Claude Code
-    [subagent](https://code.claude.com/docs/en/sub-agents) shipped as a Markdown file in the
-    working repo's `.claude/agents/` (one file per station: frontmatter `name`,
-    `description`, `tools`, then the station prompt). The chef dispatches work with the
-    `Agent` tool; Claude Code runs the subagents, in parallel when the chef asks for it. The
-    runner never passes `--bare`, because bare mode skips `.claude/agents/`
+    [subagent](https://code.claude.com/docs/en/sub-agents): a name, a description, a tool
+    list, `isolation` for writing stations (point 10) and the station prompt. The chef
+    dispatches work with the `Agent` tool; Claude Code runs the subagents, in parallel when
+    the chef asks for it. How the definitions reach the chef is settled in #21 (see Follow-ups):
+    preferably the CLI's `--agents` flag, so nothing is written into the user's repo, with
+    files in the repo's `.claude/agents/` as the fallback, installed after a diff and a
+    confirmation like the hooks. The runner never passes `--bare`: bare mode skips hooks,
+    which the peek and station identification need, and `.claude/agents/`
     ([headless docs](https://code.claude.com/docs/en/headless#start-faster-with-bare-mode)).
-    `orderup crew` installs and updates the station files after showing a diff and asking
-    for confirmation, like the hooks install (#21).
   - **2. Stations: a fixed enum with stable ids.** The ids are the wire values (#36) and never
-    change. The subagent file and its frontmatter `name` are `orderup-<id>` so they cannot
-    clash with the user's own subagents. Tool lists are Claude Code tool names.
+    change. The subagent name (the `--agents` key, or the file name and frontmatter `name` in
+    the fallback) is `orderup-<id>` so it cannot clash with the user's own subagents. Tool lists are Claude Code tool names.
 
-    | Id             | Purpose                                                                                                             | Allowed tools                                                                  | Writes files                          |
-    | -------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------- |
-    | `head-chef`    | Orchestrator: reads the task, splits it, dispatches to stations, owns the branch and the PR, writes the report card | `Agent` (station types only), `Read`, `Grep`, `Glob`, `Bash` (git and `gh pr`) | No source edits; git and PR only      |
-    | `hot`          | Backend / API: server code, protocol, CLI                                                                           | `Read`, `Grep`, `Glob`, `Edit`, `Write`, `Bash`                                | Yes                                   |
-    | `garde-manger` | Frontend / UI: web, scene, styles                                                                                   | `Read`, `Grep`, `Glob`, `Edit`, `Write`, `Bash`                                | Yes                                   |
-    | `commis`       | Research and code reading: answers questions, maps code, prepares context for other stations                        | `Read`, `Grep`, `Glob`                                                         | No (read-only tools only, no `Bash`)  |
-    | `pastry`       | Tests / QA: writes and runs tests, lint, typecheck; reports failures                                                | `Read`, `Grep`, `Glob`, `Edit`, `Write`, `Bash`                                | Yes, tests and fixtures only (prompt) |
-    | `dish`         | Refactor / cleanup: renames, dead code, formatting, small refactors without behaviour change                        | `Read`, `Grep`, `Glob`, `Edit`, `Write`, `Bash`                                | Yes                                   |
+    | Id             | Purpose                                                                                                             | Allowed tools                                                                  | Writes files                                               |
+    | -------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------- |
+    | `head-chef`    | Orchestrator: reads the task, splits it, dispatches to stations, owns the branch and the PR, writes the report card | `Agent` (station types only), `Read`, `Grep`, `Glob`, `Bash` (git and `gh pr`) | No source edits; git and PR only                           |
+    | `hot`          | Backend / API: server code, protocol, CLI                                                                           | `Read`, `Grep`, `Glob`, `Edit`, `Write`, `Bash`                                | Yes, in its own worktree (point 10)                        |
+    | `garde-manger` | Frontend / UI: web, scene, styles                                                                                   | `Read`, `Grep`, `Glob`, `Edit`, `Write`, `Bash`                                | Yes, in its own worktree (point 10)                        |
+    | `commis`       | Research and code reading: answers questions, maps code, prepares context for other stations                        | `Read`, `Grep`, `Glob`                                                         | No (read-only tools only, no `Bash`)                       |
+    | `pastry`       | Tests / QA: writes and runs tests, lint, typecheck; reports failures                                                | `Read`, `Grep`, `Glob`, `Edit`, `Write`, `Bash`                                | Yes, tests and fixtures only (prompt), in its own worktree |
+    | `dish`         | Refactor / cleanup: renames, dead code, formatting, small refactors without behaviour change                        | `Read`, `Grep`, `Glob`, `Edit`, `Write`, `Bash`                                | Yes, in its own worktree (point 10)                        |
 
-    `head-chef` is the main session, not a subagent file: its tools are set by the runner's
+    `head-chef` is the main session, not a subagent: its tools are set by the runner's
     permission flags. No station gets the `Agent` tool, and the runner sets
     `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1` so stations cannot spawn cooks of their own
     ([sub-agents docs](https://code.claude.com/docs/en/sub-agents)). "Tests and fixtures
@@ -362,36 +363,42 @@ ones, supersede them instead.
       kitchen, so the limit is met by construction and stays as a guard for later (#33).
   - **5. Report card.** Every chef run is tied to a task id chosen by the server and given
     to the chef in its prompt. The chef's final message for a task must contain exactly one
-    fenced code block with the info string `json` matching this schema (version 1):
+    fenced code block with the info string `json` matching schema version 1. The runner
+    parses that block from the run's final result.
+    - Example:
 
-        ```json
-        {
-          "schema": 1,
-          "taskId": "t_01J…",
-          "ticket": { "repo": "owner/name", "number": 31 },
-          "stations": ["hot", "pastry"],
-          "summary": "One paragraph, plain text, at most 600 characters.",
-          "prUrl": "https://github.com/owner/name/pull/42",
-          "filesChanged": ["packages/server/src/board.ts"]
-        }
-        ```
+      ```json
+      {
+        "schema": 1,
+        "taskId": "t_01J…",
+        "ticket": { "repo": "owner/name", "number": 31 },
+        "stations": ["hot", "pastry"],
+        "summary": "One paragraph, plain text, at most 600 characters.",
+        "prUrl": "https://github.com/owner/name/pull/42",
+        "filesChanged": ["packages/server/src/board.ts"],
+        "unmerged": []
+      }
+      ```
 
-        `ticket` and `prUrl` are `null` when there is none; `stations` holds station ids other
-        than `head-chef`; `filesChanged` holds repo-relative paths. The runner parses the block
-        from the run's final result. Card statuses are exactly `cooking | ready | read |
-
-    approved | sent-back`:
-    - `cooking`: created when a task starts (an `assign`, or a `send-back`resuming one).
-      \-`ready`: the run ended. This is when the "Order up!" bell rings and the browser
-      notification fires (#31).
-    - `read`: the user opened the card. `approved`/`sent-back`: the user's decision.
-    - A `talk`that ends with a report block also creates a card, directly as`ready`; a
-      `talk`without one is plain conversation.
+    - Fields: `ticket` and `prUrl` are `null` when there is none. `stations` holds station
+      ids other than `head-chef`. `filesChanged` holds repo-relative paths. `unmerged` lists
+      the station branches the chef could not merge (point 10), and is empty otherwise.
+    - Card statuses are exactly these five:
+      - `cooking`: created when a task starts, on an `assign` or on a `send-back` that
+        resumes it.
+      - `ready`: the run ended. This is when the "Order up!" bell rings and the browser
+        notification fires (#31).
+      - `read`: the user opened the card.
+      - `approved`: the user approved the work.
+      - `sent-back`: the user sent it back to the chef with a comment.
+    - A `talk` that ends with a report block also creates a card, directly as `ready`. A
+      `talk` without one is plain conversation.
     - If the block is missing, appears more than once, is not valid JSON, fails the schema or
-      names a different`taskId`, the card is still created (or moved) as `ready`with
-      `malformed: true`and the chef's raw final text, so nothing is lost. A run that ends
-      with an error or a stop also ends as`ready`, with its run status on the card.
-
+      names a different `taskId`, the card is still created (or moved) as `ready` with
+      `malformed: true` and the chef's raw final text, so nothing is lost.
+    - A run that ends with an error or a stop also ends as `ready`. Its run status is stored
+      on the card and shown as an error badge.
+    - A card with a non-empty `unmerged` list shows a "needs you" badge.
   - **6. Talking: the chef only.** Every command goes to the head chef: `talk`, `assign`,
     `stop`, and the card actions `approve` and `send-back`. No command prompts a cook, and a
     command naming any other station is rejected (#20, #36). `send-back` resumes the chef's
@@ -407,7 +414,7 @@ ones, supersede them instead.
   - **8. Identifying stations.** Documented fields are enough; no extra protocol is needed
     in the chef's output:
     - Hooks fired inside a subagent carry the common fields `agent_id` and `agent_type`;
-      `agent_type` is the subagent's frontmatter `name`, so `orderup-hot` maps to `hot`
+      `agent_type` is the subagent's name (`orderup-hot` maps to `hot`)
       ([hooks: common input fields](https://code.claude.com/docs/en/hooks#common-input-fields)).
     - `SubagentStart` carries `agent_id` and `agent_type`; `SubagentStop` adds
       `agent_transcript_path` and `last_assistant_message`
@@ -445,21 +452,51 @@ ones, supersede them instead.
       timestamps (#31).
     - `card_events`: status changes of a card with who/when, and the user's comment for
       `send-back` (#31).
-    - `owned_sessions`: the chef session ids and subagent `agentId`s the runner owns, so
+    - `owned_sessions`: the chef session ids and subagent ids (`agentId`) the runner owns, so
       those cooks render as crew and the tailer skips them (ADR-015) (#19).
     - `brigade_config`: working repo, chef model, per-station and global caps, daily usage
-      cap, and the version/hash of the installed station files (#21).
+      cap, and the version/hash of the station definitions in use (#21).
     - Not stored: peek data, hook payloads, transcript content, prompts.
-
+  - **10. Write isolation.** Writing stations (`hot`, `garde-manger`, `pastry`, `dish`) may
+    run in parallel and must never edit the same checkout at the same time. Claude Code
+    supports this: `isolation: worktree` in a subagent definition (frontmatter or the
+    `--agents` JSON) runs the subagent in its own temporary git worktree
+    ([sub-agents: frontmatter fields](https://code.claude.com/docs/en/sub-agents#supported-frontmatter-fields),
+    [worktrees: isolate subagents](https://code.claude.com/docs/en/worktrees#isolate-subagents-with-worktrees)).
+    The [Claude Code changelog](https://code.claude.com/docs/en/changelog) lists it in 2.1.50.
+    - The four writing stations set `isolation: worktree`. `commis` is read-only and reads
+      the chef's checkout directly.
+    - Subagent worktrees branch from the repo's default branch unless `worktree.baseRef` is
+      `"head"`. The runner passes that setting with `--settings`, so each station starts from
+      the task branch the chef has checked out.
+    - Each writing station commits its work on its worktree branch and names that branch in
+      its final message. The docs do not say how the `Agent` result reports a worktree
+      branch, so the station prompt makes it explicit.
+    - The head chef merges the station branches into the task branch one at a time, then
+      pushes the task branch and opens the PR (#26).
+    - On a merge conflict the chef aborts that merge and sends the work back to the same
+      station once, with the conflicting files, to redo it on top of the current task
+      branch. If it conflicts again, the chef leaves that branch unmerged, lists it in the
+      card's `unmerged` field, and the card reaches `ready` with a "needs you" badge. The
+      chef never resolves a conflict by picking a side.
+    - `-p` runs do not clean up their worktrees
+      ([worktrees: clean up](https://code.claude.com/docs/en/worktrees#clean-up-worktrees)).
+      The runner removes merged station worktrees and their branches when the card reaches
+      `ready`, and keeps unmerged ones until the card is approved or sent back. Worktrees
+      live under `.claude/worktrees/`, which the runner adds to `.git/info/exclude` (local,
+      never committed).
+    - Isolation is about files, not headcount: the caps of point 4 still apply.
 - **Alternatives considered:**
   - **Option B: one `claude -p` process per station, dispatched by the server.** Gives
     OrderUp hard per-station concurrency and budget, and lets cooks talk to each other. It
     also means OrderUp writes its own scheduler, splits tasks itself or through an extra
     chef process, and multiplies processes against ADR-015's limit of 3. Deferred: it is
     only needed for cooks talking to each other (#35), which is not in V1.
-  - Station definitions passed per run with the CLI's `--agents` flag instead of files in
-    `.claude/agents/`: leaves the user's repo untouched, but the definitions are invisible
-    to the user and cannot be reviewed as a diff. Kept as an open question for #21.
+  - Station files in `.claude/agents/` as the only path: visible and reviewable as a diff,
+    but they write into the user's repo. Kept as the fallback to `--agents` (see Follow-ups,
+    #21).
+  - No write isolation, one writing station at a time: simpler, but serialises most tasks.
+    Not needed, since `isolation: worktree` exists (point 10).
   - Free-form members as in ADR-015: rejected for V1, see Context.
   - The chef announcing each dispatch in a parseable line: not needed, documented hook and
     stream fields identify stations (point 8). Revisit if they disappear.
@@ -472,5 +509,30 @@ ones, supersede them instead.
   - Per-station caps are soft. Users who need hard per-station limits wait for option B.
   - The cost of a run includes its stations; it is shown per run and per day, not per
     station, in V1.
-  - The station files live in the user's repo, so installing them is a visible, confirmed
-    change, like the hooks.
+  - With `--agents`, the station definitions never touch the user's repo; with the fallback
+    files, installing them is a visible, confirmed change, like the hooks.
+  - Station worktrees take disk space until the runner removes them, and merge conflicts
+    between stations are possible; the chef retries once, then hands them to the user.
+- **Follow-ups (answers to the open questions on PR #37, 2026-10-15):**
+  - #19, crew runner:
+    - Whether `total_cost_usd` in the chef's `-p` result includes its stations' cost is
+      verified with a real run before the budget cap is trusted.
+    - Push guard: in addition to permission rules, the runner installs a git `pre-push` hook
+      in the chef's checkout that refuses pushes to the repo's default branch.
+  - #21, brigade config:
+    - Station definitions: prefer the CLI's `--agents` flag, which carries the full
+      definition (prompt plus frontmatter fields, `tools` and `isolation` included), so
+      nothing is written into the user's repo
+      ([sub-agents: choose the subagent scope](https://code.claude.com/docs/en/sub-agents#choose-the-subagent-scope)).
+      Files in `.claude/agents/` stay the fallback. Passing `--agents` a JSON file path (for
+      long prompts) needs Claude Code 2.1.281; inline JSON has no stated minimum.
+    - Minimum CLI version: at least 2.1.217, the first with
+      `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` per the
+      [Claude Code changelog](https://code.claude.com/docs/en/changelog). The exact hook field
+      versions are pinned in #21 for `--doctor`; the changelog lists `agent_id` and
+      `agent_type` on hook events in 2.1.69, `agent_id` and `agent_transcript_path` on
+      `SubagentStop` in 2.0.42 and `isolation: worktree` in 2.1.50, all below 2.1.217.
+  - #31, report whiteboard:
+    - The bell rings when a card becomes `ready`: confirmed.
+    - Failed or stopped runs end as `ready` with their run status on the card, shown as an
+      error badge: confirmed for V1.
