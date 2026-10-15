@@ -322,6 +322,12 @@ export type ParseCrewCommandResult =
   | { ok: true; command: CrewCommand }
   | { ok: false; command: CrewCommandType | null; code: CrewErrorCode; message: string };
 
+/**
+ * `<meta name>` the server adds to the kitchen page it serves with `--crew`, holding the
+ * command token. The page reads it and attaches the token to every crew command.
+ */
+export const COMMAND_TOKEN_META = 'orderup-command-token';
+
 const COMMAND_FIELDS: Record<CrewCommandType, readonly string[]> = {
   talk: ['text'],
   assign: ['ticket'],
