@@ -205,6 +205,38 @@ Defined in `packages/shared/src/protocol.ts`.
 - The client may send `{ type: 'command', id, command }`. Until V1 every command gets
   `command.result` with `ok: false, error: 'not_implemented'`.
 
+### Crew messages (V1, ADR-016)
+
+Types only for now: nothing sends them yet, so they live in their own unions (`CrewCommand`,
+`CrewServerMessage`) and the observer path is unchanged.
+
+- **Stations** (`STATIONS`): `head-chef | hot | garde-manger | commis | pastry | dish`. These
+  ids are the wire values and never change. Crew sessions carry `station` (`head-chef`) and
+  their subagents carry `station` (a work station, or `null` for a non-OrderUp subagent).
+  Both also carry `crewState`: `idle | working | talking-to-chef | needs-you | done | error`.
+  Observed sessions have neither.
+- **Commands** (client → server), each with `requestId`, `token` and `to: 'head-chef'`:
+  `talk { text }`, `assign { ticket }`, `stop`, `approve { cardId }`,
+  `send-back { cardId, comment }`. No command can address a cook: `to` only admits
+  `head-chef`, and `parseCrewCommand` rejects any other station with `chef_only` and any
+  other malformed command, including unknown fields, with `invalid_command`.
+- **Replies**: `ack` names the command it answers and carries what it started (`runId`,
+  `cardId`). `error` carries a `CrewErrorCode`: `unauthorized`, `chef_only`, `unknown_card`,
+  `invalid_card_status`, `busy`, `usage_cap_reached`, `crew_disabled`, `invalid_command`.
+- **Report cards** (`ReportCard`): `id`, `taskId`, `ticket`, `status`
+  (`cooking | ready | read | approved | sent-back`), `runStatus` (how the last run ended,
+  `null` while the first one cooks) and timestamps. A card holds the chef's report block
+  (`ReportBlock`, schema 1: `taskId`, `ticket`, `stations`, `summary`, `prUrl`,
+  `filesChanged`, `unmerged`), or `malformed: true` with the chef's `rawText`.
+- **Events** (server → client, broadcast): `crew.run.started { runId, sessionId, trigger,
+taskId }`, `crew.message.delta`, `crew.run.ended { status, usage }`,
+  `crew.budget.exceeded { runId, capUsd, spentUsd }`, `crew.card.created` and
+  `crew.card.updated { card }`, and `crew.peek { peek }`.
+- **Peek** (`CookPeek`): station, crew state, current tool and target, files touched, the
+  last few assistant messages and, for a station, the `description` of the dispatching
+  `Agent` call. It is built in memory from hooks and transcripts. No type carries prompt
+  text: not the user's prompts, and not the `prompt` input of `Agent` calls.
+
 ## Security
 
 See [SECURITY.md](../SECURITY.md) and ADR-003. In short: `127.0.0.1` only, `Host`/`Origin`
