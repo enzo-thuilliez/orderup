@@ -33,8 +33,15 @@ export interface TicketSourceOptions {
 const DEFAULT_INTERVAL_MS = 60_000;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_BUFFER = 10 * 1024 * 1024;
-const REPO_RE = /^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+$/;
+const REPO_RE = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
 const FIELDS = 'number,title,labels,url,updatedAt';
+/** gh's default is 30; more than this many open issues per repo are not shown. */
+const ISSUE_LIMIT = 100;
+
+/** "owner/name", and never an option gh could parse (`-`). */
+export function isValidRepo(repo: string): boolean {
+  return REPO_RE.test(repo) && !repo.startsWith('-');
+}
 
 /** `execFile` with no shell. The environment is inherited for `gh`'s auth and never logged. */
 export const execGh: ExecFn = (file, args, { timeout, maxBuffer }) =>
@@ -125,6 +132,8 @@ export function parseIssueList(stdout: string, repo: string): Ticket[] {
  */
 export class TicketSource {
   readonly #repos: string[];
+  /** Skipped, never passed to gh; reported as an `error` status. */
+  readonly #invalid: string[];
   readonly #intervalMs: number;
   readonly #timeoutMs: number;
   readonly #exec: ExecFn;
@@ -143,12 +152,11 @@ export class TicketSource {
 
   constructor(options: TicketSourceOptions) {
     const repos = [...new Set(options.repos)];
-    const bad = repos.find((r) => !REPO_RE.test(r));
-    if (bad !== undefined) throw new TypeError(`invalid repo "${bad}", expected "owner/name"`);
     const intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
     if (!(intervalMs > 0)) throw new TypeError('intervalMs must be positive');
 
-    this.#repos = repos;
+    this.#repos = repos.filter(isValidRepo);
+    this.#invalid = repos.filter((r) => !isValidRepo(r));
     this.#intervalMs = intervalMs;
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.#exec = options.exec ?? execGh;
@@ -213,7 +221,18 @@ export class TicketSource {
       try {
         const { stdout } = await this.#exec(
           'gh',
-          ['issue', 'list', '--repo', repo, '--state', 'open', '--json', FIELDS],
+          [
+            'issue',
+            'list',
+            '--repo',
+            repo,
+            '--state',
+            'open',
+            '--json',
+            FIELDS,
+            '--limit',
+            String(ISSUE_LIMIT),
+          ],
           { timeout: this.#timeoutMs, maxBuffer: MAX_BUFFER },
         );
         this.#byRepo.set(repo, parseIssueList(stdout, repo));
@@ -224,6 +243,11 @@ export class TicketSource {
       }
     }
 
+    // A gh failure is more actionable, so it wins over a bad repo.
+    const bad = this.#invalid[0];
+    if (!failure && bad !== undefined) {
+      failure = new Failure('error', `invalid repo "${bad.slice(0, 100)}", expected "owner/name"`);
+    }
     if (!failure) this.#updatedAt = Date.now();
     this.#setStatus(failure?.status ?? 'ok', failure?.message ?? null);
 

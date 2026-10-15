@@ -85,6 +85,8 @@ describe('TicketSource', () => {
         'open',
         '--json',
         'number,title,labels,url,updatedAt',
+        '--limit',
+        '100',
       ],
       expect.objectContaining({ timeout: 5000 }),
     );
@@ -110,12 +112,39 @@ describe('TicketSource', () => {
     expect(log).not.toHaveBeenCalled();
   });
 
-  it('rejects repos that are not "owner/name"', () => {
-    const exec: ExecFn = async () => ({ stdout: '[]' });
-    for (const repo of ['acme', '--help/x', 'a/b/c', 'acme/ app']) {
-      expect(() => new TicketSource({ repos: [repo], exec })).toThrow(TypeError);
+  it('skips invalid repos, never passes them to gh, and reports them once', async () => {
+    const exec = vi.fn<ExecFn>(async (_file, args) => ({ stdout: issues(args[3]!) }));
+    const { source, log } = setup(exec, { repos: ['--web', 'acme/app', 'owner/name;rm'] });
+    await source.poll();
+    await source.poll();
+
+    expect(exec).toHaveBeenCalledTimes(2);
+    for (const [, args] of exec.mock.calls) {
+      expect(args).not.toContain('--web');
+      expect(args).not.toContain('owner/name;rm');
     }
+    expect(source.tickets.map((t) => t.repo)).toEqual(['acme/app', 'acme/app']);
+    expect(source.snapshot()).toMatchObject({
+      status: 'error',
+      message: 'invalid repo "--web", expected "owner/name"',
+    });
+    expect(log).toHaveBeenCalledOnce();
   });
+
+  it.each(['-acme/app', 'acme', 'a/b/c', 'acme/ app', 'ac_me/app'])(
+    'treats %s as invalid',
+    async (repo) => {
+      const exec = vi.fn<ExecFn>(async () => ({ stdout: '[]' }));
+      const { source } = setup(exec, { repos: [repo] });
+      await source.poll();
+      expect(exec).not.toHaveBeenCalled();
+      expect(source.snapshot()).toMatchObject({
+        status: 'error',
+        message: `invalid repo "${repo}", expected "owner/name"`,
+        updatedAt: null,
+      });
+    },
+  );
 
   it.each([
     ['gh-missing', execError({ code: 'ENOENT' })],

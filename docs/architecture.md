@@ -273,7 +273,9 @@ The brigade is decided in [ADR-016](../DECISIONS.md#adr-016-head-chef-and-brigad
 `packages/server/src/sources/tickets.ts` (`TicketSource`) turns open GitHub issues into order
 tickets. It takes the brigade's repos as `owner/name` (one brigade per working repo, ADR-016)
 and, for each, runs `gh issue list --repo <owner/name> --state open --json
-number,title,labels,url,updatedAt` with `execFile` (no shell, args as an array, 15 s timeout).
+number,title,labels,url,updatedAt --limit 100` with `execFile` (no shell, args as an array,
+15 s timeout). A repo that does not match `owner/name` or starts with `-` is never passed to
+gh: it is skipped and reported as an `error` status naming it.
 It polls at start and then 60 s (configurable) after the previous poll ends, so polls never
 overlap; `stop()` clears the timer. Each repo's issues are kept in memory, most recently
 updated first.
