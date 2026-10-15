@@ -21,6 +21,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Server: crew persistence in `~/.orderup/orderup.db` with `node:sqlite` (no new dependency):
   versioned migrations, `runs` and `usage` tables and a per-day usage total for the budget cap.
   Not used by the running server yet.
+- Server: GitHub ticket source that polls `gh issue list` for each brigade repo, keeps the
+  last good list when `gh` is missing, logged out or failing, and reports its status in a new
+  `crew.tickets` message. Not started by the server yet.
 
 ## [0.1.0] - 2026-09-27
 

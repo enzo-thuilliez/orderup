@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   CREW_COMMAND_TYPES,
   HEAD_CHEF,
@@ -6,6 +6,9 @@ import {
   isStation,
   parseCrewCommand,
   type CrewCommand,
+  type CrewServerMessage,
+  type Ticket,
+  type TicketSourceStatus,
 } from '../src/index.js';
 
 const base = { requestId: 'r1', token: 'tok', to: HEAD_CHEF };
@@ -88,5 +91,32 @@ describe('parseCrewCommand', () => {
     ['a send-back without comment', { ...valid[4], comment: '' }],
   ])('rejects %s as invalid_command', (_label, value) => {
     expect(parseCrewCommand(value)).toMatchObject({ ok: false, code: 'invalid_command' });
+  });
+});
+
+describe('crew.tickets', () => {
+  it('is a crew server message carrying tickets and the source status', () => {
+    const ticket: Ticket = {
+      repo: 'owner/name',
+      number: 24,
+      title: 'GitHub ticket source via gh',
+      labels: ['v1'],
+      url: 'https://github.com/owner/name/issues/24',
+    };
+    const message: CrewServerMessage = {
+      type: 'crew.tickets',
+      tickets: [ticket],
+      status: 'unauthenticated',
+      message: 'gh is not logged in',
+      updatedAt: null,
+    };
+    expect(JSON.parse(JSON.stringify(message))).toEqual(message);
+
+    type TicketsMessage = Extract<CrewServerMessage, { type: 'crew.tickets' }>;
+    expectTypeOf<TicketsMessage['tickets']>().toEqualTypeOf<Ticket[]>();
+    expectTypeOf<TicketsMessage['status']>().toEqualTypeOf<TicketSourceStatus>();
+    expectTypeOf<TicketSourceStatus>().toEqualTypeOf<
+      'ok' | 'gh-missing' | 'unauthenticated' | 'error'
+    >();
   });
 });
