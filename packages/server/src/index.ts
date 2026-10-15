@@ -4,6 +4,8 @@ import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { DEFAULT_PORT } from 'orderup-shared';
+import { DisabledCrewController, type CrewController } from './crew/controller.js';
+import { defaultTokenPath, generateToken, removeTokenFile, writeTokenFile } from './crew/token.js';
 import { createGuard, createRequestHandler } from './http.js';
 import { SessionStore, type StoreOptions } from './sessions/store.js';
 import { normalizeHook } from './sources/hooks.js';
@@ -37,6 +39,15 @@ export {
   type StationDefinition,
   type StationTool,
 } from './crew/stations.js';
+export {
+  crewError,
+  DisabledCrewController,
+  type CrewController,
+  type CrewRequest,
+  type CrewResult,
+} from './crew/controller.js';
+export { CREW_RATE_LIMIT } from './crew/channel.js';
+export { defaultTokenPath } from './crew/token.js';
 
 const { version } = createRequire(import.meta.url)('../package.json') as { version: string };
 
@@ -52,10 +63,15 @@ export interface ServerOptions extends StoreOptions {
   /** Transcript directory to tail, or `false` to disable. Default: `~/.claude/projects`. */
   projectsDir?: string | false;
   /**
-   * `orderup --crew`: crew is enabled for this run (ADR-015). Stored only: nothing runs crew
-   * yet (#19), and without it the server is the observer only.
+   * `orderup --crew`: enables the authenticated command channel (ADR-015). The server writes a
+   * fresh token to `commandTokenFile` and injects it into the kitchen page. Without it every
+   * crew command gets `crew_disabled` and the server is the observer only.
    */
   crew?: boolean;
+  /** Handles authorized crew commands. Default: `DisabledCrewController` until #19. */
+  crewController?: CrewController;
+  /** Default: `~/.orderup/command-token`. */
+  commandTokenFile?: string;
 }
 
 export interface RunningServer {
@@ -76,11 +92,14 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
   const store = new SessionStore(options);
   let port = options.port ?? DEFAULT_PORT;
   const guard = createGuard(() => port, options.allowedOrigins);
+  const crewToken = options.crew === true ? generateToken() : null;
+  const tokenFile = options.commandTokenFile ?? defaultTokenPath();
 
   const server = createServer(
     createRequestHandler({
       guard,
       webRoot: options.webRoot,
+      commandToken: crewToken,
       onHook: (payload) => {
         const event = normalizeHook(payload);
         if (event) store.apply(event, 'hook');
@@ -97,7 +116,24 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
   });
   port = (server.address() as AddressInfo).port;
 
-  const socket = attachWebSocket(server, { store, guard, serverVersion: version });
+  // After listening, so a second OrderUp that loses the port never replaces the running one's
+  // token. Crew refuses to start when the token cannot be stored readable by the user only.
+  if (crewToken !== null) {
+    try {
+      writeTokenFile(tokenFile, crewToken);
+    } catch (err) {
+      await new Promise((resolve) => server.close(resolve));
+      throw err;
+    }
+  }
+
+  const socket = attachWebSocket(server, {
+    store,
+    guard,
+    serverVersion: version,
+    crewToken,
+    crewController: options.crewController ?? new DisabledCrewController(),
+  });
 
   const projectsDir = options.projectsDir ?? defaultProjectsDir();
   const tail = projectsDir
@@ -117,6 +153,7 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
       clearInterval(ticker);
       tail?.stop();
       socket.close();
+      if (crewToken !== null) removeTokenFile(tokenFile, crewToken);
       server.closeAllConnections();
       return new Promise((resolve, reject) =>
         server.close((err) => (err ? reject(err) : resolve())),

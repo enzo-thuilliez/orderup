@@ -219,13 +219,43 @@ Defined in `packages/shared/src/protocol.ts`.
 
 - On connect the server sends `hello` (protocol version), then `snapshot` (all sessions).
 - Then `session.upsert` and `session.remove` as things change.
-- The client may send `{ type: 'command', id, command }`. Until V1 every command gets
-  `command.result` with `ok: false, error: 'not_implemented'`.
+- The client may send `{ type: 'command', id, command }` (the reserved V0 command). It
+  always gets `command.result` with `ok: false, error: 'not_implemented'`.
+- Crew commands (below) are top-level messages whose `type` is a crew command type. The
+  server answers each one with an `ack` or an `error` (`CrewCommandReply`). Crew events are
+  not sent yet. Both stay in their own unions (`CrewCommand`, `CrewServerMessage`).
+
+### Command channel (ADR-015, #20)
+
+`packages/server/src/crew/`: `channel.ts` (per-connection checks), `token.ts`,
+`controller.ts`.
+
+- **Off by default.** Without `--crew` every crew command gets `crew_disabled` and nothing
+  else changes: no token, no file, no `<meta>`.
+- **Token.** With `--crew`, each start generates 32 random bytes (hex) and writes them to
+  `~/.orderup/command-token`: created as a temporary file with mode `0600`, checked, then
+  renamed over the old one (in a `0700` `~/.orderup`). If that fails, `startServer` throws and
+  crew does not start. The file is removed on shutdown if it still holds this start's token.
+  The token is written after `listen`, so an OrderUp that loses the port never replaces the
+  running one's token. It is never logged and never put in a URL.
+- **Page.** The server adds `<meta name="orderup-command-token" content="…">`
+  (`COMMAND_TOKEN_META`) to `index.html` when it serves it, with `cache-control: no-store`.
+  Under `npm run dev` a Vite plugin reads the token file and adds the same tag. The web
+  `Connection.sendCrew` attaches it to every crew command.
+- **Checks, in order.** The WebSocket upgrade already passed Host/Origin (ADR-003). Then per
+  command: crew enabled (`crew_disabled`), rate limit of 10 commands per second per
+  connection (`rate_limited`), token by `timingSafeEqual` on SHA-256 digests
+  (`unauthorized`, checked before the shape so an unauthenticated client learns nothing),
+  then `parseCrewCommand` (`chef_only`, `invalid_command`). Only then is the command
+  executed. On Windows the token file's `0600` check is skipped (no POSIX modes there; see
+  SECURITY.md).
+- **Controller.** Valid commands go to a `CrewController` (`talk`, `assign`, `stop`,
+  `approve`, `sendBack`) without their token, and its typed `ack` or `error` is sent back.
+  Until the runner (#19) implements it, `DisabledCrewController` answers `crew_disabled`.
 
 ### Crew messages (V1, ADR-016)
 
-Types only for now: nothing sends them yet, so they live in their own unions (`CrewCommand`,
-`CrewServerMessage`) and the observer path is unchanged.
+The command channel above handles crew commands; crew events are types only for now.
 
 - **Stations** (`STATIONS`): `head-chef | hot | garde-manger | commis | pastry | dish`. These
   ids are the wire values and never change. Crew sessions carry `station` (`head-chef`) and
@@ -239,7 +269,8 @@ Types only for now: nothing sends them yet, so they live in their own unions (`C
   other malformed command, including unknown fields, with `invalid_command`.
 - **Replies**: `ack` names the command it answers and carries what it started (`runId`,
   `cardId`). `error` carries a `CrewErrorCode`: `unauthorized`, `chef_only`, `unknown_card`,
-  `invalid_card_status`, `busy`, `usage_cap_reached`, `crew_disabled`, `invalid_command`.
+  `invalid_card_status`, `busy`, `rate_limited`, `usage_cap_reached`, `crew_disabled`,
+  `invalid_command`.
 - **Report cards** (`ReportCard`): `id`, `taskId`, `ticket`, `status`
   (`cooking | ready | read | approved | sent-back`), `runStatus` (how the last run ended,
   `null` while the first one cooks) and timestamps. A card holds the chef's report block
@@ -258,7 +289,8 @@ taskId }`, `crew.message.delta`, `crew.run.ended { status, usage }`,
 ## Security
 
 See [SECURITY.md](../SECURITY.md) and ADR-003. In short: `127.0.0.1` only, `Host`/`Origin`
-checks on HTTP and WebSocket, and a per-launch secret before the command channel is enabled.
+checks on HTTP and WebSocket, and a per-start token on every crew command (see Command
+channel above).
 
 ## Crew (V1)
 

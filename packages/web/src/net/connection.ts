@@ -2,7 +2,12 @@
  * Reconnecting WebSocket client for the local server. Talks only to the page's own origin,
  * which is the OrderUp server on 127.0.0.1 (or the Vite dev proxy in front of it).
  */
-import type { ClientMessage, ServerMessage } from 'orderup-shared';
+import {
+  COMMAND_TOKEN_META,
+  type ClientMessage,
+  type CrewCommand,
+  type ServerMessage,
+} from 'orderup-shared';
 import { parseMessage, type ConnectionStatus } from './store';
 
 /** The slice of the WebSocket API we use, so tests can pass a fake. */
@@ -20,6 +25,8 @@ export interface ConnectionOptions {
   url: string;
   onMessage(msg: ServerMessage): void;
   onStatus(status: ConnectionStatus): void;
+  /** Crew command token from the page (`readCommandToken`), `null` without `--crew`. */
+  commandToken?: string | null;
   createSocket?: (url: string) => SocketLike;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
@@ -35,6 +42,17 @@ export function reconnectDelay(attempt: number): number {
 /** `ws://host/ws` (or `wss:`) for the page's own origin. */
 export function socketUrl(loc: { protocol: string; host: string }): string {
   return `${loc.protocol === 'https:' ? 'wss:' : 'ws:'}//${loc.host}/ws`;
+}
+
+/** A crew command before the connection attaches the page's token. */
+export type CrewCommandDraft<C extends CrewCommand = CrewCommand> = C extends unknown
+  ? Omit<C, 'token'>
+  : never;
+
+/** The command token the server injected into the page with `--crew`, or `null`. */
+export function readCommandToken(doc: Pick<Document, 'querySelector'>): string | null {
+  const meta = doc.querySelector<HTMLMetaElement>(`meta[name="${COMMAND_TOKEN_META}"]`);
+  return meta?.content || null;
 }
 
 export class Connection {
@@ -70,6 +88,14 @@ export class Connection {
   send(msg: ClientMessage): boolean {
     if (!this.socket || this.socket.readyState !== OPEN) return false;
     this.socket.send(JSON.stringify(msg));
+    return true;
+  }
+
+  /** Sends a crew command with the page's token. False when closed or without a token. */
+  sendCrew(command: CrewCommandDraft): boolean {
+    const token = this.opts.commandToken;
+    if (!token || !this.socket || this.socket.readyState !== OPEN) return false;
+    this.socket.send(JSON.stringify({ ...command, token }));
     return true;
   }
 

@@ -4,7 +4,7 @@ import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 import { CameraRig } from './controls/cameraRig';
 import { DemoFeed, demoCount, isDemo } from './demo/script';
 import { displayName, nearest } from './logic/cook';
-import { Connection, socketUrl } from './net/connection';
+import { Connection, readCommandToken, socketUrl } from './net/connection';
 import { applyMessage, initialState, withStatus, type ConnectionStatus } from './net/store';
 import { css, palette } from './palette';
 import { Cooks } from './scene/cooks';
@@ -89,6 +89,7 @@ if (demo) {
     url: socketUrl(location),
     onMessage: dispatch,
     onStatus: setStatus,
+    commandToken: readCommandToken(document),
   });
   conn.start();
 }

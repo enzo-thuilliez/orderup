@@ -1,8 +1,8 @@
 import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import type { IncomingMessage, RequestListener, ServerResponse } from 'node:http';
 import path from 'node:path';
-import { PROTOCOL_VERSION, type HealthResponse } from 'orderup-shared';
+import { COMMAND_TOKEN_META, PROTOCOL_VERSION, type HealthResponse } from 'orderup-shared';
 
 /** Hook payloads include tool inputs, which can hold whole files (Write). */
 const MAX_HOOK_BYTES = 8 * 1024 * 1024;
@@ -39,9 +39,16 @@ export interface HttpOptions {
   onHook: (payload: unknown) => void;
   /** Directory of the built web app to serve, if any. */
   webRoot?: string;
+  /** Crew command token, injected into the served kitchen page (ADR-015). `--crew` only. */
+  commandToken?: string | null;
 }
 
-export function createRequestHandler({ guard, onHook, webRoot }: HttpOptions): RequestListener {
+export function createRequestHandler({
+  guard,
+  onHook,
+  webRoot,
+  commandToken = null,
+}: HttpOptions): RequestListener {
   const root = webRoot ? path.resolve(webRoot) : null;
   let lastHookAt: number | null = null;
 
@@ -84,7 +91,7 @@ export function createRequestHandler({ guard, onHook, webRoot }: HttpOptions): R
       );
     }
     if (root && (req.method === 'GET' || req.method === 'HEAD')) {
-      return void serveStatic(root, pathname, req, res);
+      return void serveStatic(root, pathname, req, res, commandToken);
     }
     send(res, 404, 'not found');
   };
@@ -135,6 +142,7 @@ async function serveStatic(
   pathname: string,
   req: IncomingMessage,
   res: ServerResponse,
+  commandToken: string | null,
 ): Promise<void> {
   let decoded: string;
   try {
@@ -158,6 +166,17 @@ async function serveStatic(
     if (!info?.isFile()) return send(res, 404, 'not found');
   }
 
+  if (commandToken !== null && file === path.join(root, 'index.html')) {
+    const html = withTokenMeta(await readFile(file, 'utf8'), commandToken);
+    res.writeHead(200, {
+      'content-type': CONTENT_TYPES['.html'],
+      'content-length': Buffer.byteLength(html),
+      // The token changes on every start and must not outlive it in a cache.
+      'cache-control': 'no-store',
+    });
+    return void res.end(req.method === 'HEAD' ? undefined : html);
+  }
+
   res.writeHead(200, {
     'content-type': CONTENT_TYPES[path.extname(file)] ?? 'application/octet-stream',
     'content-length': info.size,
@@ -166,4 +185,12 @@ async function serveStatic(
   createReadStream(file)
     .on('error', () => res.destroy())
     .pipe(res);
+}
+
+/** Adds the command token as a `<meta>` in `<head>`. The token is hex, so it needs no escaping. */
+export function withTokenMeta(html: string, token: string): string {
+  const meta = `<meta name="${COMMAND_TOKEN_META}" content="${token}" />`;
+  return /<head(\s[^>]*)?>/i.test(html)
+    ? html.replace(/<head(\s[^>]*)?>/i, (head) => `${head}\n    ${meta}`)
+    : `${meta}\n${html}`;
 }
