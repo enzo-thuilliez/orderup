@@ -41,7 +41,7 @@ working ──Notification / PermissionRequest──▶ waiting
    │                                            │
    └──Stop──▶ done ──(quiet 5 min)──▶ idle ─────┘
 SessionEnd (any state) ──▶ removed
-idle for 2 h ──▶ forgotten
+idle for 10 min ──▶ walks out (removed)
 ```
 
 ### Hook → state
@@ -64,19 +64,29 @@ Background subagents return from `Task` immediately, so their commis leaves earl
 
 ### Timers (store)
 
-| Condition                           | Effect            | In the kitchen          |
-| ----------------------------------- | ----------------- | ----------------------- |
-| `done` with no events for 5 min     | `idle`            | Coffee break out back   |
-| `working` with no events for 30 min | `idle`            | Terminal closed quietly |
-| `idle` with no events for 2 h       | session forgotten | Cook goes home          |
+| Condition                           | Effect          | In the kitchen          |
+| ----------------------------------- | --------------- | ----------------------- |
+| `done` with no events for 5 min     | `idle`          | Coffee break out back   |
+| `working` with no events for 30 min | `idle`          | Terminal closed quietly |
+| `idle` with no events for 10 min    | session removed | Cook walks out          |
 
-`waiting` never times out: the bell keeps ringing until someone answers.
+`waiting` never times out: the bell keeps ringing until someone answers. A cook who walked out
+comes back with the next event for their session.
+
+Each timer fires at the time it fell due (`updatedAt` + delay), not at the tick that notices
+it, and every overdue timer runs at once. So a session whose last transcript line is old
+enough expires before it is stored, and is never broadcast.
+
+Sessions whose `cwd` is under `os.tmpdir()` (symlinks resolved) are ignored: throwaway repos
+never get a cook. If such a cwd only shows up on a later event, the cook is removed then.
 
 ### Transcripts
 
 The tail watches `$CLAUDE_CONFIG_DIR/projects` (default `~/.claude/projects`) recursively. At
 startup it reads transcripts modified in the last hour; after that it reads any transcript
-that changes, from the beginning the first time.
+that changes, from the beginning the first time. Each read up to the file's current end goes
+to the store as one batch, which broadcasts only the net change per session: a replayed
+transcript never flashes its intermediate states.
 
 - **Tokens:** every assistant line's `message.usage`, deduplicated by `message.id` (one
   message is written over several lines), summed per `sessionId`. Sidechain (subagent) lines
@@ -135,7 +145,8 @@ session data.
 `orderup` (`packages/cli`) parses flags, then either acts on hooks and exits
 (`--install-hooks`, `--uninstall-hooks`, `--doctor`), runs an `orderup crew` command (see
 [Brigade config](#brigade-config-orderup-crew)) or starts the server. `--crew` is stored in
-the server options (`ServerOptions.crew`); nothing runs crew yet (#19), and without it the
+the server options (`ServerOptions.crew`): with it the server runs the crew runner (see
+[Crew runner](#crew-runner)), and without it the
 server is the observer only:
 
 1. Starts the server on `127.0.0.1:<port>` (default 7717), serving the built kitchen:
@@ -383,18 +394,21 @@ with `--crew`: `startServer` then opens the database and a runner, and `close()`
 
 - **API.** `startRun({ trigger, taskId, prompt, resumeSessionId? })` resolves `{ ok, runId }`
   or a refusal: `busy` (already 3 chef processes, ADR-015, or this task already has one),
-  `usage_cap_reached`, `no_repo`, `invalid` (task id not `[A-Za-z0-9_-]+`, a session id or
+  `usage_cap_reached` (less than `MIN_BUDGET_USD` = $0.10 of the daily cap left), `no_repo`, `invalid` (task id not `[A-Za-z0-9_-]+`, a session id or
   model that could read as a flag) or `setup_failed`. `stop(runId)` and `stopAll()` resolve
-  once the processes are gone. Progress goes to `onEvent`: `run.started`, `run.session`,
-  `run.text` (the chef's own text), `run.tool` (with `subagentType` and `description` for
-  `Agent` calls, never their `prompt`), `run.subagent` (an `agentId` and its station),
-  `run.ended { status, usage, resultText }` and `budget.exceeded`.
+  once the processes are gone. Progress goes to `onEvent`: `run.started { cwd, repo }`,
+  `run.session`, `run.text` (the chef's own text), `run.tool` (with `target`, and
+  `subagentType` and `description` for `Agent` calls, never their `prompt`), `run.subagent`
+  (an `agentId`, its station and its `Agent` call, once), `run.subagent.ended { status }`,
+  `run.permission-denied`, `run.branch { agentId, branch }`, `run.usage` (after each
+  `result`), `run.ended { status, usage, resultText }` and `budget.exceeded`. `startRun` also
+  takes the task's `ticket`, shown in the chef's report example (`null` for a `talk`).
 - **Process.** The user's `claude` (path injectable), spawned without a shell in its own
   process group, in the task's chef worktree:
   `-p --output-format stream-json --verbose --max-turns 30 --agents <agentsJson()>
---settings {"worktree":{"baseRef":"head"}}`, plus `--model` when `brigade_config` has one,
+--settings <chefSettingsJson()>`, plus `--model` when `brigade_config` has one,
   `--resume <id>` when given and `--max-budget-usd <daily_cap_usd minus today's usage>`
-  (whole cents, rounded down, at least 0.01) when the daily cap is on; with a cap of 0 the
+  (whole cents, rounded down) when the daily cap is on; with a cap of 0 the
   flag is omitted, then `--append-system-prompt <buildChefSystemPrompt()>`: the head chef's
   instructions (`crew/chef-prompt.ts`): dispatch only to the `--agents` stations and never
   write code except merges, the station and global caps from `brigade_config`, merge the
@@ -418,16 +432,38 @@ with `--crew`: `startServer` then opens the database and a runner, and `close()`
   `master`). A later run of the task (`send-back`) reuses it, only if it belongs to the same
   repo. `removeChefWorktree()` removes the worktree and the branch once the card is approved or
   sent back (callers: #31). The user's checkout is never switched or written to.
+- **Station permissions** (ADR-016 point 10, amended). Stations run in the background and
+  cannot answer a prompt. Writing stations get `permissionMode: acceptEdits` in `--agents`;
+  `--settings` is `{"worktree":{"baseRef":"head"},"permissions":{"allow":STATION_ALLOW_RULES}}`:
+  `git add|commit|status|diff`, `npm test`, `npm run test|lint|typecheck` and
+  `npx vitest|tsc|eslint`. Nothing allows `git push`, so stations are denied it; the CLI
+  merges this layer with the user's settings (probe case d).
 - **Stream.** `crew/stream.ts` (`parseStreamLine`) maps stream-json lines to typed events:
   `system/init` (session id), assistant `text` and `tool_use` blocks (`Agent` / `Task` with
-  `subagent_type`), `tool_result` (with `tool_use_result.agentId` when present),
-  `stream_event` text deltas and `result` (`total_cost_usd`, `usage`). Malformed or unknown
-  lines give no event and never end a run.
-- **Usage and budget.** Each `result` line adds a `usage` row for the run. A resumed session
-  reports the conversation's whole cost, so what that chef session already recorded is
-  subtracted. A start is refused when today's total is at or over `daily_cap_usd` (0 = no
-  cap); a run whose result takes the day over the cap is killed and reported with
-  `budget.exceeded`. It ends as `usage_cap_reached`, stored as `stopped` in `runs`.
+  `subagent_type`; a `target` like hooks show it), `tool_result` (with
+  `tool_use_result.agentId`, `status` and `worktreeBranch` when present), `system/task_started`
+  and `system/task_notification` (ids, `subagent_type` and status only: never their `prompt`
+  or `summary`), `system/permission_denied`, `system/vcs_state_changed`, `stream_event` text
+  deltas and `result` (`total_cost_usd`, `modelUsage`, `usage`, `terminal_reason`).
+  Malformed or unknown lines give no event and never end a run.
+- **A result is not the end.** A background station's `Agent` result comes back at once
+  (`async_launched`), the chef's turn ends with a first `result`, and the station's
+  `task_notification` starts a second turn in the same process. The run ends at process exit,
+  and the last `result` decides its status. A station ends at its `task_notification`, or at
+  a `completed` `Agent` result when it ran in the foreground.
+- **Station branches.** A writing station works in `.claude/worktrees/agent-<agentId>` on
+  `worktree-agent-<agentId>`. `run.branch` reports it from the `Agent` result's
+  `worktreeBranch` or from a `vcs_state_changed` commit (`agentIdOfWorktree` reads the
+  `agentId` back from its `cwd` or branch).
+- **Usage and budget.** Each `result` line adds a `usage` row for the run. `total_cost_usd`
+  and `modelUsage` are cumulative for the process (stations included) and, for a resumed
+  session, the conversation, so what that chef session already recorded is subtracted: cost
+  and tokens (`modelUsage` summed over models) are recorded as deltas. Without `modelUsage`,
+  the turn's `usage` (chef only) is added. A start is refused when less than $0.10 of
+  `daily_cap_usd` is left (0 = no cap). A run whose result takes the day over the cap is
+  killed, and one the CLI ends on `--max-budget-usd` (`error_max_budget_usd` or
+  `terminal_reason: budget_exhausted`) exits by itself; both are reported with
+  `budget.exceeded` and end as `usage_cap_reached`, stored as `stopped` in `runs`.
 - **Status.** `success` (exit 0 with a non-error result), `stopped`, `usage_cap_reached`,
   else `error` (non-zero exit, no result, binary missing).
 - **Shutdown.** A stop sends SIGTERM to the chef's process group, then SIGKILL after 3 s;
@@ -435,6 +471,17 @@ with `--crew`: `startServer` then opens the database and a runner, and `close()`
   and a synchronous `exit` handler kills the groups if the server dies without it. On Windows
   only the chef process itself is signalled.
 - **Ownership.** The chef's session id and each subagent `agentId` go to `owned_sessions`.
+- **Crew cooks.** `CrewCooks` (`crew/cooks.ts`) turns runner events into store events (source
+  `crew`): the chef's session becomes a crew cook (`kind: crew`, `station: head-chef`, its
+  worktree as `cwd`, the working repo's name as `repo`), each `Agent` call a subagent with its
+  `station` (`null` for a non-OrderUp subagent), tool calls inside a station its activity, a
+  station's end `done` (or `error`), `run.usage` its tokens and `run.ended` `done` (`error`
+  for `error` and `usage_cap_reached`). `crewState` follows the cook state (`waiting` is
+  `needs-you`). Once claimed, the store drops hook and transcript events for that session:
+  the user's hooks fire inside the chef too, and its stations' hooks carry its session id.
+  While its run is active (claim to `run.ended`) no store timer applies to it, so a chef
+  waiting on a quiet background station never goes stale or walks out after 10 minutes; the
+  usual timers resume once the run ends. The temp-dir filter does not apply to crew sessions.
 
 ### Crew controller
 

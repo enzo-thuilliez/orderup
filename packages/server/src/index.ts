@@ -9,6 +9,7 @@ import {
   RunnerCrewController,
   type CrewController,
 } from './crew/controller.js';
+import { CrewCooks } from './crew/cooks.js';
 import { CrewRunner, type RunnerOptions } from './crew/runner.js';
 import { defaultTokenPath, generateToken, removeTokenFile, writeTokenFile } from './crew/token.js';
 import { createGuard, createRequestHandler } from './http.js';
@@ -41,11 +42,13 @@ export {
   STATION_DEFINITIONS,
   stationOfAgent,
   stationsHash,
+  STATION_ALLOW_RULES,
   type AgentJson,
   type StationDefinition,
   type StationTool,
 } from './crew/stations.js';
 export { buildChefSystemPrompt } from './crew/chef-prompt.js';
+export { CrewCooks } from './crew/cooks.js';
 export {
   assignPrompt,
   crewError,
@@ -59,8 +62,10 @@ export {
 export { CREW_RATE_LIMIT } from './crew/channel.js';
 export { defaultTokenPath } from './crew/token.js';
 export {
+  agentIdOfWorktree,
   buildChefArgs,
   buildChefEnv,
+  chefSettingsJson,
   CrewRunner,
   MAX_CONCURRENT_RUNS,
   MAX_SUBAGENT_SPAWN_DEPTH,
@@ -187,7 +192,17 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
       throw err;
     }
     const repository = new Repository(crewDb);
-    runner = new CrewRunner({ ...options.runner, repository });
+    // The chef and its stations appear in the kitchen as crew cooks.
+    const cooks = new CrewCooks(store);
+    const onEvent = options.runner?.onEvent;
+    runner = new CrewRunner({
+      ...options.runner,
+      repository,
+      onEvent: (event) => {
+        cooks.onRunnerEvent(event);
+        onEvent?.(event);
+      },
+    });
     crewController = options.crewController ?? new RunnerCrewController(runner, repository);
   }
 
@@ -201,7 +216,10 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
 
   const projectsDir = options.projectsDir ?? defaultProjectsDir();
   const tail = projectsDir
-    ? new TranscriptTail({ projectsDir, onEvent: (event) => store.apply(event, 'transcript') })
+    ? new TranscriptTail({
+        projectsDir,
+        onEvents: (events) => store.applyAll(events, 'transcript'),
+      })
     : null;
   void tail?.start().catch(() => undefined);
 

@@ -20,12 +20,39 @@ export interface StationDefinition {
   tools: readonly StationTool[];
   /** Writing stations run in their own git worktree (ADR-016 point 10). */
   isolation?: 'worktree';
+  /**
+   * Writing stations accept file edits without asking: a background station cannot prompt,
+   * so without it every edit is denied (ADR-016 Follow-ups, probe case c).
+   */
+  permissionMode?: 'acceptEdits';
   /** The station's system prompt. */
   prompt: string;
 }
 
 const READ_ONLY = ['Read', 'Grep', 'Glob'] as const satisfies readonly StationTool[];
 const WRITING = [...READ_ONLY, 'Edit', 'Write', 'Bash'] as const satisfies readonly StationTool[];
+
+/**
+ * The Bash commands stations may run without a prompt, passed in the chef's `--settings` as
+ * `permissions.allow`. Permission rules are per process, so they hold for the chef and every
+ * station: git to record work, and the test and lint commands the pastry station runs.
+ * Anything else a station runs in Bash is denied, since a background station cannot prompt:
+ * `git push` among them. `disallowedTools` cannot deny it more narrowly: a `Bash(...)` rule
+ * there removes the whole Bash tool (probe case h).
+ */
+export const STATION_ALLOW_RULES: readonly string[] = [
+  'Bash(git add:*)',
+  'Bash(git commit:*)',
+  'Bash(git status:*)',
+  'Bash(git diff:*)',
+  'Bash(npm test:*)',
+  'Bash(npm run test:*)',
+  'Bash(npm run lint:*)',
+  'Bash(npm run typecheck:*)',
+  'Bash(npx vitest:*)',
+  'Bash(npx tsc:*)',
+  'Bash(npx eslint:*)',
+];
 
 const SHARED_RULES = `Rules for every OrderUp station:
 - You work for the head chef. Do only the task you were given, then report back.
@@ -34,7 +61,7 @@ const SHARED_RULES = `Rules for every OrderUp station:
 
 const WORKTREE_RULES = `You run in your own git worktree, branched from the chef's task branch.
 - Commit your work on your worktree branch with a clear, conventional commit message.
-- End your final message with one line \`Branch: <branch>\` naming that branch, so the chef can merge it.
+- End your final message with one line \`Branch: <branch>\` naming that branch (\`git status\` shows it), so the chef can merge it.
 - If you changed nothing, say so and do not commit.`;
 
 function writingPrompt(role: string): string {
@@ -50,6 +77,7 @@ export const STATION_DEFINITIONS: readonly StationDefinition[] = [
       'OrderUp hot station: backend and API work (server code, protocol, CLI). Edits code in its own worktree.',
     tools: WRITING,
     isolation: 'worktree',
+    permissionMode: 'acceptEdits',
     prompt: writingPrompt(
       'You are the hot station of an OrderUp kitchen: the backend cook. You change server code, ' +
         'protocols, APIs and command-line tools. Follow the conventions of the code around you, ' +
@@ -63,6 +91,7 @@ export const STATION_DEFINITIONS: readonly StationDefinition[] = [
       'OrderUp garde-manger station: frontend and UI work (web, scene, styles). Edits code in its own worktree.',
     tools: WRITING,
     isolation: 'worktree',
+    permissionMode: 'acceptEdits',
     prompt: writingPrompt(
       'You are the garde-manger station of an OrderUp kitchen: the frontend cook. You change web ' +
         'UI, rendering and styles. Follow the conventions of the code around you, keep changes ' +
@@ -88,6 +117,7 @@ export const STATION_DEFINITIONS: readonly StationDefinition[] = [
       'OrderUp pastry station: tests and QA. Writes and runs tests, lint and type checks, and reports failures. Edits tests and fixtures only, in its own worktree.',
     tools: WRITING,
     isolation: 'worktree',
+    permissionMode: 'acceptEdits',
     prompt: writingPrompt(
       'You are the pastry station of an OrderUp kitchen: the tests cook. You write and run ' +
         'tests, lint and type checks, and report failures precisely. You edit tests and test ' +
@@ -102,6 +132,7 @@ export const STATION_DEFINITIONS: readonly StationDefinition[] = [
       'OrderUp dish station: refactors and cleanup (renames, dead code, formatting, small refactors) without behaviour change. Edits code in its own worktree.',
     tools: WRITING,
     isolation: 'worktree',
+    permissionMode: 'acceptEdits',
     prompt: writingPrompt(
       'You are the dish station of an OrderUp kitchen: the cleanup cook. You rename, remove dead ' +
         'code, format and make small refactors that do not change behaviour. Run the tests ' +
@@ -121,6 +152,7 @@ export interface AgentJson {
   prompt: string;
   tools: StationTool[];
   isolation?: 'worktree';
+  permissionMode?: 'acceptEdits';
 }
 
 /** The object for the claude CLI's `--agents` flag, keyed by subagent name. */
@@ -135,6 +167,7 @@ export function agentsObject(
         prompt: def.prompt,
         tools: [...def.tools],
         ...(def.isolation ? { isolation: def.isolation } : {}),
+        ...(def.permissionMode ? { permissionMode: def.permissionMode } : {}),
       },
     ]),
   );
@@ -183,6 +216,7 @@ export function renderAgentFile(def: StationDefinition, hash: string = stationsH
     `description: ${JSON.stringify(def.description)}`,
     `tools: ${def.tools.join(', ')}`,
     ...(def.isolation ? [`isolation: ${def.isolation}`] : []),
+    ...(def.permissionMode ? [`permissionMode: ${def.permissionMode}`] : []),
     '---',
     '',
     def.prompt.trimEnd(),

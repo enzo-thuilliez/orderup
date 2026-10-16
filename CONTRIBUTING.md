@@ -87,7 +87,7 @@ npm run build
 node scripts/probe-claude-cli.mjs                  # every case
 node scripts/probe-claude-cli.mjs agents budget    # some: agents, worktree-branch,
                                                    # settings-merge, append-system-prompt,
-                                                   # budget, flags
+                                                   # budget, flags, station-policy
 ```
 
 - It makes real runs with your login: on a subscription they use your usage, with an API key
