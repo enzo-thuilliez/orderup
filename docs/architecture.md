@@ -461,6 +461,9 @@ with `--crew`: `startServer` then opens the database and a runner, and `close()`
   for `error` and `usage_cap_reached`). `crewState` follows the cook state (`waiting` is
   `needs-you`). Once claimed, the store drops hook and transcript events for that session:
   the user's hooks fire inside the chef too, and its stations' hooks carry its session id.
+  While its run is active (claim to `run.ended`) no store timer applies to it, so a chef
+  waiting on a quiet background station never goes stale or walks out after 10 minutes; the
+  usual timers resume once the run ends. The temp-dir filter does not apply to crew sessions.
 
 ### Crew controller
 

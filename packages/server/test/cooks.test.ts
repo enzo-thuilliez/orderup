@@ -1,4 +1,5 @@
 import { readdirSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type { SessionView } from 'orderup-shared';
 import { describe, expect, it } from 'vitest';
@@ -10,6 +11,7 @@ import {
   startServer,
   type RunnerEvent,
 } from '../src/index.js';
+import { LEAVE_AFTER_MS } from '../src/sessions/store.js';
 import { FAKE_CLAUDE, tempRepo, tmp, waitFor } from './helpers.js';
 
 const RUN = 'run-1';
@@ -175,6 +177,50 @@ describe('CrewCooks', () => {
       'hook',
     );
     expect(chef()).toMatchObject({ state: 'working', crewState: 'working', subagents: [] });
+  });
+
+  it('keeps a claimed chef past the idle timeout while its run is active', () => {
+    const { send, chef, tick } = setup();
+    start(send);
+    send(tool('Agent', { toolUseId: 'toolu_hot', subagentType: 'orderup-hot' }));
+    // A background station can stay quiet for long: no stale, no coffee break, no walking out.
+    tick(LEAVE_AFTER_MS + 60_000);
+    expect(chef()).toMatchObject({ kind: 'crew', state: 'working', crewState: 'working' });
+    tick(60 * 60_000);
+    expect(chef()).toMatchObject({ state: 'working', subagents: [expect.anything()] });
+
+    // Once the run ends, the usual timers apply: coffee break, then the cook walks out.
+    send({
+      type: 'run.ended',
+      runId: RUN,
+      status: 'success',
+      usage: { tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, costUsd: 0 },
+      resultText: null,
+      exitCode: 0,
+    });
+    tick(6 * 60_000);
+    expect(chef()).toMatchObject({ state: 'idle', crewState: 'idle' });
+    tick(LEAVE_AFTER_MS + 60_000);
+    expect(chef()).toBeUndefined();
+  });
+
+  it('shows a crew session under the temp dir, unlike an observed one', () => {
+    const { store, send, chef } = setup();
+    send({
+      type: 'run.started',
+      runId: RUN,
+      trigger: 'talk',
+      taskId: 't1',
+      cwd: path.join(os.tmpdir(), 'orderup-home', '.orderup', 'worktrees', 'k', 't1'),
+      repo: 'k',
+    });
+    send({ type: 'run.session', runId: RUN, sessionId: SESSION });
+    expect(chef()).toMatchObject({ kind: 'crew' });
+    store.apply(
+      { sessionId: 'observed', at: 1, type: 'session.start', cwd: path.join(os.tmpdir(), 'x') },
+      'hook',
+    );
+    expect(store.get('observed')).toBeUndefined();
   });
 
   it('ignores events of runs it never saw start', () => {
