@@ -43,6 +43,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   only, at most 3 chef processes, the daily usage cap enforced before and during a run, and no
   child left behind on close. Run usage and owned sessions are saved (new `owned_sessions`
   table). Not reachable from the kitchen yet (#20).
+- Repo: `scripts/probe-claude-cli.mjs` probes your real `claude` CLI with the head chef's
+  arguments in throwaway repos (uses your subscription or API key). Findings for Claude Code
+  2.1.301 are recorded in the Follow-ups of ADR-016.
 
 ## [0.1.0] - 2026-09-27
 
