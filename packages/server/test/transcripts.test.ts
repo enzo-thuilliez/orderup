@@ -127,7 +127,7 @@ describe('TranscriptTail', () => {
     const project = path.join(dir, '-code-app');
     mkdirSync(project);
     const events: SessionEvent[] = [];
-    tail = new TranscriptTail({ projectsDir: dir, onEvent: (e) => events.push(e) });
+    tail = new TranscriptTail({ projectsDir: dir, onEvents: (e) => events.push(...e) });
     return { dir, project, events };
   }
 
@@ -171,7 +171,7 @@ describe('TranscriptTail', () => {
 
   it('waits for a projects directory that does not exist yet', async () => {
     const dir = path.join(mkdtempSync(path.join(os.tmpdir(), 'orderup-missing-')), 'projects');
-    tail = new TranscriptTail({ projectsDir: dir, onEvent: () => undefined, retryMs: 10 });
+    tail = new TranscriptTail({ projectsDir: dir, onEvents: () => undefined, retryMs: 10 });
     await expect(tail.start()).resolves.toBeUndefined();
   });
 });
