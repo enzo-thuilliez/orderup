@@ -9,6 +9,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- ADR-017: one kitchen per repo, picked on arrival from local checkouts, with a HUD (cooks,
+  cost, tokens, spend, plan limits), a cook panel with a live terminal and a Changes tab, and
+  Issues, Pull requests and reports boards on the walls. Prompt text may show in the terminal
+  only over the authenticated crew channel, from memory.
 - ADR-016: the V1 crew is a head chef plus fixed stations (hot, garde-manger, commis, pastry,
   dish) run as Claude Code subagents. The user talks only to the head chef, reports land on a
   whiteboard, and cooks can be peeked at read-only.
