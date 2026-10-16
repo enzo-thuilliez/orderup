@@ -425,9 +425,10 @@ with `--crew`: `startServer` then opens the database and a runner, and `close()`
 
 - **`talk`.** A new task id (`t_` + 26 Crockford base32 characters, ULID-style: time first,
   then random). The text goes to the chef on stdin unchanged. It resumes the chef session of
-  the latest `talk` run that has one (`Repository.latestRunWithSession('talk')`), unless a
-  running chef is in that session (or a `talk` is starting it): two processes never write the
-  same session, so a `talk` during another one starts a new conversation. Acks `runId`.
+  the latest `talk` run that has one (`Repository.latestRunWithSession('talk')`). One `talk`
+  at a time: while a `talk` run is active, or another `talk` is still starting, it answers
+  `busy` ("the head chef is still answering") and starts nothing, so two processes never
+  write the chef conversation. Active `assign` runs do not block it. Acks `runId`.
 - **`assign`.** A new task id and a new session. The stdin prompt names the ticket
   (`owner/name#number`) and tells the chef to read it with `gh issue view`; the server does not
   fetch the issue. Acks `runId` and `cardId` = the task id (one card per task, #31).

@@ -408,17 +408,34 @@ describe('crew commands through the runner', () => {
       /** The fake's log of one run, once it has one (and, with `grandchild`, once it spawned). */
       log: (match: (log: FakeLog) => boolean) => waitFor(() => logs().find(match), 10_000),
       async send(command: Record<string, unknown>): Promise<CrewCommandReply> {
-        const requestId = `r${++n}`;
-        client.ws.send(JSON.stringify({ to: 'head-chef', token: t, ...command, requestId }));
-        return waitFor(
-          () => replies.find((m) => 'requestId' in m && m.requestId === requestId),
-          10_000,
+        const [reply] = await this.sendAll([command]);
+        return reply!;
+      },
+      /** Sends every command before waiting for any reply; replies in sending order. */
+      sendAll(commands: Record<string, unknown>[]): Promise<CrewCommandReply[]> {
+        const ids = commands.map((command) => {
+          const requestId = `r${++n}`;
+          client.ws.send(JSON.stringify({ to: 'head-chef', token: t, ...command, requestId }));
+          return requestId;
+        });
+        return Promise.all(
+          ids.map((requestId) =>
+            waitFor(
+              () => replies.find((m) => 'requestId' in m && m.requestId === requestId),
+              10_000,
+            ),
+          ),
         );
       },
       idle: () => waitFor(() => running.runner!.activeRunIds.length === 0 || undefined, 10_000),
     };
   }
 
+  /** The fake picks its scenario from the prompt, and an assign prompt names the ticket repo. */
+  const slowAssign = (number: number) => ({
+    type: 'assign',
+    ticket: { repo: 'o/scenario:slow', number },
+  });
   const arg = (log: FakeLog, flag: string) =>
     log.args.includes(flag) ? log.args[log.args.indexOf(flag) + 1] : undefined;
   const runIdOf = (reply: CrewCommandReply) => {
@@ -498,26 +515,59 @@ describe('crew commands through the runner', () => {
   it('stop picks the most recently started run', async () => {
     const k = await kitchen();
     const older = runIdOf(await k.send({ type: 'talk', text: 'scenario:slow older' }));
-    const newer = runIdOf(await k.send({ type: 'talk', text: 'scenario:slow newer' }));
+    const newer = runIdOf(await k.send(slowAssign(1)));
     expect(await k.send({ type: 'stop' })).toMatchObject({ runId: newer });
     expect(k.runner.activeRunIds).toEqual([older]);
   });
 
-  it(`a ${MAX_CONCURRENT_RUNS + 1}th concurrent talk is busy, and concurrent talks never share a session`, async () => {
+  it('a second talk during an active talk is busy, and starts nothing', async () => {
     const k = await kitchen();
-    for (let i = 0; i < MAX_CONCURRENT_RUNS; i++) {
-      runIdOf(await k.send({ type: 'talk', text: `scenario:slow ${i}` }));
-    }
+    runIdOf(await k.send({ type: 'talk', text: 'scenario:slow first' }));
+    expect(await k.send({ type: 'talk', text: 'scenario:slow second' })).toEqual({
+      type: 'error',
+      requestId: 'r2',
+      command: 'talk',
+      code: 'busy',
+      message: 'the head chef is still answering',
+    });
+    await k.log((l) => l.prompt.endsWith('first'));
+    expect(k.runner.activeRunIds).toHaveLength(1);
+    expect(k.logs().map((l) => l.prompt)).toEqual(['scenario:slow first']);
+  });
+
+  it('two talks sent at the same time start one run; the other is busy', async () => {
+    const k = await kitchen();
+    const replies = await k.sendAll([
+      { type: 'talk', text: 'scenario:slow a' },
+      { type: 'talk', text: 'scenario:slow b' },
+    ]);
+    expect(replies.map((r) => (r.type === 'ack' ? 'ack' : r.code)).sort()).toEqual(['ack', 'busy']);
+    expect(k.runner.activeRunIds).toHaveLength(1);
+  });
+
+  it('a talk during an active assign starts and resumes the latest talk session', async () => {
+    const k = await kitchen();
+    runIdOf(await k.send({ type: 'talk', text: 'scenario:ok first' }));
+    const first = await k.log((l) => l.prompt.endsWith('first'));
+    await k.idle();
+    const assign = runIdOf(await k.send(slowAssign(7)));
+    await k.log((l) => l.grandchild !== null);
+    expect(k.runner.activeRunIds).toEqual([assign]);
+    const talkRun = runIdOf(await k.send({ type: 'talk', text: 'scenario:ok again' }));
+    const again = await k.log((l) => l.prompt.endsWith('again'));
+    expect(arg(again, '--resume')).toBe(`sess-${first.pid}`);
+    expect(talkRun).not.toBe(assign);
+  });
+
+  it(`a talk while ${MAX_CONCURRENT_RUNS} assigns run gets the runner's busy`, async () => {
+    const k = await kitchen();
+    for (let i = 1; i <= MAX_CONCURRENT_RUNS; i++) runIdOf(await k.send(slowAssign(i)));
     expect(await k.send({ type: 'talk', text: 'scenario:slow extra' })).toMatchObject({
       type: 'error',
       command: 'talk',
       code: 'busy',
+      message: `already ${MAX_CONCURRENT_RUNS} chef runs`,
     });
-    const logs = await waitFor(
-      () => (k.logs().length === MAX_CONCURRENT_RUNS ? k.logs() : undefined),
-      10_000,
-    );
-    expect(logs.map((l) => arg(l, '--resume'))).toEqual(logs.map(() => undefined));
   });
 
   it('a talk over the daily cap gets usage_cap_reached', async () => {

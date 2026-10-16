@@ -106,13 +106,13 @@ const REFUSAL_CODES: Record<StartRunRefusal, CrewErrorCode> = {
 /**
  * Drives the crew runner from the command channel (#20, ADR-016 point 6). Every command goes
  * to the head chef. Each `talk` and `assign` is a new task with its own id; a `talk` continues
- * the chef conversation of the latest `talk`. Report cards are not stored yet (#31), so
- * `approve` and `send-back` know no card.
+ * the chef conversation of the latest `talk`, one `talk` at a time. Report cards are not
+ * stored yet (#31), so `approve` and `send-back` know no card.
  */
 export class RunnerCrewController implements CrewController {
   private readonly now: () => number;
-  /** Chef sessions a `talk` is resuming while its run is still starting. */
-  private readonly resuming = new Set<string>();
+  /** A `talk` is in `startRun`, before its run row exists. */
+  private talkStarting = false;
 
   constructor(
     private readonly runner: CrewRunner,
@@ -122,11 +122,19 @@ export class RunnerCrewController implements CrewController {
     this.now = options.now ?? Date.now;
   }
 
+  /**
+   * One `talk` at a time: the chef conversation is one session, and two processes must never
+   * write it. A `talk` while another is starting or running is `busy`; `assign` runs do not
+   * count, they have sessions of their own.
+   */
   async talk(request: CrewRequest<'talk'>): Promise<CrewResult<'talk'>> {
+    if (this.talkStarting || this.talkRunning()) {
+      return crewError(request.requestId, 'talk', 'busy', 'the head chef is still answering');
+    }
     const taskId = newTaskId(this.now());
-    const resumeSessionId = this.talkSession();
-    // The run row only exists once startRun returns: hold the session until then.
-    if (resumeSessionId) this.resuming.add(resumeSessionId);
+    const resumeSessionId = this.repository.latestRunWithSession('talk')?.chefSessionId;
+    // Set before the first await, so a second talk sent at the same time sees it.
+    this.talkStarting = true;
     let started;
     try {
       started = await this.start(request, {
@@ -136,7 +144,7 @@ export class RunnerCrewController implements CrewController {
         ...(resumeSessionId ? { resumeSessionId } : {}),
       });
     } finally {
-      if (resumeSessionId) this.resuming.delete(resumeSessionId);
+      this.talkStarting = false;
     }
     if (!started.ok) return started.error;
     return { type: 'ack', requestId: request.requestId, command: 'talk', runId: started.runId };
@@ -180,19 +188,9 @@ export class RunnerCrewController implements CrewController {
     return Promise.resolve(this.unknownCard(request));
   }
 
-  /**
-   * The chef session of the latest `talk`, unless a running chef is in it: two processes must
-   * never write the same session, so a `talk` during another one starts a fresh conversation.
-   */
-  private talkSession(): string | undefined {
-    const sessionId = this.repository.latestRunWithSession('talk')?.chefSessionId;
-    if (!sessionId) return undefined;
-    const inUse =
-      this.resuming.has(sessionId) ||
-      this.runner.activeRunIds.some(
-        (id) => this.repository.getRun(id)?.chefSessionId === sessionId,
-      );
-    return inUse ? undefined : sessionId;
+  /** Whether an active run is a `talk`. Its row exists once `startRun` has returned. */
+  private talkRunning(): boolean {
+    return this.runner.activeRunIds.some((id) => this.repository.getRun(id)?.trigger === 'talk');
   }
 
   private async start(
