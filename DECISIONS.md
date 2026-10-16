@@ -674,10 +674,10 @@ ones, supersede them instead.
       spend is estimated from transcript token counts with a price table bundled in
       `orderup-shared`, and labelled as an estimate. All-time spend is computed from the
       transcripts on disk plus `usage`; no new store holds observed history.
-    - Plan limits are read from local data only (hook payloads, transcripts or the runner's
-      stream-json), never by calling an Anthropic API from the observer path. Which field
-      carries them is probed with `scripts/probe-claude-cli.mjs` before the HUD shows them
-      (Follow-ups). When no local source has them, the HUD shows them as unknown.
+    - Plan limits on the crew path (`--crew`): read through the user's own `claude` CLI with
+      the `get_usage` control request of the stream-json protocol (#50), which starts no
+      conversation. On the observer path: local data only (hook payloads, transcripts), else
+      shown as unknown. The observer path still makes no network call of its own.
   - **4. Cook panel: live terminal and Changes.** Clicking a cook opens a panel that replaces
     ADR-016's peek.
     - **Terminal tab:** the session's log rendered like Claude Code: assistant text, tool calls,
@@ -726,6 +726,5 @@ ones, supersede them instead.
   - #33 implements points 1 and 2 without a theme dropdown. The HUD, the cook panel and the
     boards land in their own issues.
 - **Follow-ups:**
-  - Plan limits: find the local field (statusline input, hook payload or stream-json) with
-    `scripts/probe-claude-cli.mjs` and record it here before the HUD shows them.
+  - Verify `get_usage` on the real CLI with `scripts/probe-claude-cli.mjs` (#50).
   - The observed price table: where it comes from and how it is updated when prices change.

@@ -339,7 +339,9 @@ yet:
   `brigade_config.repo_path` (no clone, no network). Its kitchen shows the observed sessions
   in that repo or its worktrees (`~/.orderup/worktrees/<repo>/…` included) plus its crew.
 - A HUD shows the repo, the cooks with state, cost and tokens, today's and all-time spend and
-  the plan limits (5-hour session, week), from local data only.
+  the plan limits (5-hour session, week): with `--crew` through the `get_usage` control
+  request of the user's own `claude` CLI (#50), which starts no conversation; without it from
+  local data only, else unknown.
 - Clicking a cook opens a panel with a live terminal (text, tool calls, results, edit diffs)
   and a Changes tab (`git diff`). Only the head chef's panel has a talk input. Panel data is
   sent to the requesting client only and never stored.
