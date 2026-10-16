@@ -536,3 +536,75 @@ ones, supersede them instead.
     - The bell rings when a card becomes `ready`: confirmed.
     - Failed or stopped runs end as `ready` with their run status on the card, shown as an
       error badge: confirmed for V1.
+  - #19, real CLI probe (`scripts/probe-claude-cli.mjs`, Claude Code 2.1.301, 2026-10-16,
+    `--model haiku`, the arguments of `buildChefArgs` on `main`):
+    - a. `--agents`: 2.1.301. Accepted: the `system/init` line lists all five `orderup-*`
+      names in `agents`. The chef's call is `tool_use` `name: "Agent"` with
+      `input.subagent_type: "orderup-commis"`, and the `user` line of its `tool_result` has
+      `tool_use_result.agentId` (also in the text as `agentId: …`). The dispatch ran in the
+      background by default (`tool_use_result.isAsync: true`, `status: "async_launched"`,
+      `subagent_stats.requested.unset: 1`, `started_in_background: 1`): the `tool_result`
+      comes back at once, the chef's turn ends with a first `result` (`result_index: 0`),
+      then a `system/task_notification` starts a second turn in the same process, with a
+      second `system/init` and a second `result` (`result_index: 1`,
+      `origin.kind: "task-notification"`). `system/task_started` carries `task_id` (equal
+      to `agentId`), `tool_use_id`, `subagent_type` and also `prompt`. Station messages carry
+      `parent_tool_use_id`. Runner change: a `result` line is not the end of a run; keep
+      ending at process exit and taking the last `result` as final (as today), and never
+      forward `system/task_started.prompt` (`stream.ts` ignores `system` lines today, keep it
+      so if it starts reading `task_*` lines as a second source of `agentId` →
+      `subagent_type`).
+    - b. Cost: 2.1.301. `result.total_cost_usd` includes the station: `modelUsage` token
+      totals equal the chef's plus the station's per-message sums (cache reads 92596 + 3880 =
+      96476, cache writes 34166 + 7549 = 41715). `total_cost_usd` and `modelUsage` are
+      cumulative for the process (both `result` lines reported 0.00903), while `result.usage`
+      covers only that turn and the chef only (its two `result.usage` values add up to the
+      chef's sums, without the station). The per-message `usage.output_tokens` in
+      `assistant` lines are partial (53 summed against 579 in `modelUsage`). On `--resume`
+      both totals also carry the session's earlier runs (case e: cache reads 8730 + 39903 =
+      48633 in the resumed run's `modelUsage`). Runner change: the cost delta logic (subtract
+      what the session already recorded) is right; take tokens from `modelUsage` (summed over models, as
+      a delta like the cost) instead of adding up `result.usage`, which misses stations.
+    - c. Worktree branch: 2.1.301. Not in the `Agent` `tool_result` (an async launch).
+      The station's worktree is `.claude/worktrees/agent-<agentId>` on the branch
+      `worktree-agent-<agentId>`, both derivable from `agentId`. When the station commits,
+      a `system/vcs_state_changed` line has `kind: "commit"`, `branch` and `cwd` (no agent
+      id field; `cwd` contains it). The branch contains the chef's HEAD (the task branch
+      commit), so `worktree.baseRef: "head"` through `--settings` works. With the runner's
+      flags as-is the station could not write: a background station cannot prompt, so its
+      `Bash` call was denied with `system/permission_denied`,
+      `decision_reason_type: "asyncAgent"`, and the empty worktree was removed. That denial
+      is not in `result.permission_denials` (empty). A user-level `PreToolUse` hook also ran
+      inside the station and blocked its first `Bash` call. With
+      `--permission-mode acceptEdits` and `--allowedTools` for `git add` / `git commit` the
+      station committed. Runner change: give writing stations a permission policy (permission
+      mode plus allow rules for git, through flags or `--settings`), surface
+      `system/permission_denied` lines, and take the station branch from `agentId` or
+      `vcs_state_changed` rather than only the `Branch:` line of the station prompt.
+    - d. Settings merge: 2.1.301. With `--settings {"worktree":{"baseRef":"head"}}` and no
+      `--model`, the `system/init` fields `model`, `permissionMode`, `mcp_servers` (count),
+      `agents`, `slash_commands` and the user's hook lines (`system/hook_started`,
+      `hook_response`) were identical to a run without `--settings`. `tools` differed only by
+      one claude.ai connector whose `mcp_servers` status was `pending` instead of
+      `connected` at init (timing: another `--settings` run had it `connected`). A
+      project-local settings layer written by the probe (a `model` and a `permissions.deny`
+      rule) applied under `--settings`: haiku in `init.model` and
+      `permission_denials: ["Read"]`. Merged, not replaced. Runner change: none.
+    - e. `--append-system-prompt`: 2.1.301. Works with `-p` and `--agents` (five `orderup-*`
+      in `init.agents`) and with `--resume` (same `session_id`): both `result` texts ended
+      with the appended instruction's marker word. It was passed again on the resumed run.
+      Runner change: none, as long as it is passed on every run, resumes included.
+    - f. Budget: 2.1.301, on a subscription. `--max-budget-usd 0.05` on a one-turn run:
+      `subtype: "success"`, `is_error: false`, `total_cost_usd` about 0.0064, exit code 0, no
+      false budget error. `0.01` on a heavier run: exit code 1, last `result` with
+      `subtype: "error_max_budget_usd"`, `is_error: true`,
+      `errors: ["Reached maximum budget ($0.01)"]`, `terminal_reason: "budget_exhausted"`
+      and no `result` text, after a first `success` result. `total_cost_usd` was 0.0114:
+      the cap is checked between turns and a run can overshoot it by one turn. Runner change:
+      map `error_max_budget_usd` (or `terminal_reason: "budget_exhausted"`) to the
+      `usage_cap_reached` status and `budget.exceeded` instead of `error`, and count on
+      overshoot. A minimal haiku turn costs about 0.0064, so the `MIN_BUDGET_USD` floor of
+      0.01 leaves room for about one turn: consider refusing the start below a larger floor.
+    - g. Flags: 2.1.301. `-p --output-format stream-json` without `--verbose` exits 1 with no
+      stdout; the CLI says stream-json requires `--verbose` in print mode. Runner change:
+      none, keep `--verbose`.
