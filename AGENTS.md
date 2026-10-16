@@ -69,6 +69,29 @@ Run lint, format:check, typecheck, test, build and smoke before proposing a PR. 
 - Wire types live in `orderup-shared` only. Never duplicate them in server or web.
 - The session reducer (`server/src/sessions/machine.ts`) stays pure; timers and I/O live outside it.
 
+## Working from an issue
+
+- **Start**: read the issue, every issue in its Dependencies and the ADRs it names in
+  [DECISIONS.md](DECISIONS.md). If a dependency is still open, stop and say so.
+- **Branch**: `feat/`, `fix/`, `chore/` or `docs/` plus a short slug. One issue, one branch,
+  one PR.
+- **PR body**: first line `Closes #N`, or `Part of #N` when the issue says the PR is one step.
+  Then What, How, Tests, and anything left for a later PR.
+- **Commits**: conventional, subject lowercase after the type and scope (commitlint rejects
+  `ADR…`, `GitHub…`). PR titles are not linted.
+- **CHANGELOG**: one bullet under `Unreleased`, added in its own last commit. Never edit
+  existing bullets.
+- **Conflicts**: merge `main` into the branch. Never rebase, never force push (denied by
+  `.claude/settings.json`). Never resolve conflicts in GitHub's web editor.
+- **Migrations**: only one open PR may add a sqlite migration. Check open PRs touching
+  `packages/server/src/persistence/db.ts` before adding one.
+- **GitHub**: use `gh api` (REST) for issues and PRs. `gh issue view` and `gh pr edit` without
+  `--json` fail on the Projects classic deprecation.
+- **Web changes**: before/after screenshots in the PR.
+- **Real `claude` CLI behaviour**: check it with `scripts/probe-claude-cli.mjs` and record the
+  findings in the ADR's Follow-ups. Never guess.
+- **Before pushing**: lint, format:check, typecheck, test, build, smoke.
+
 ## Hard rules
 
 - The observer path makes **no network calls** other than to `127.0.0.1`, **no LLM calls** and
