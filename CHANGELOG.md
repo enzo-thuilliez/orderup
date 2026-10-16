@@ -51,6 +51,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Repo: `scripts/probe-claude-cli.mjs` probes your real `claude` CLI with the head chef's
   arguments in throwaway repos (uses your subscription or API key). Findings for Claude Code
   2.1.301 are recorded in the Follow-ups of ADR-016.
+- Docs: a "Working from an issue" section in `AGENTS.md` for coding agents: dependencies to
+  check first, branch and PR body shape, CHANGELOG and conflict rules, one sqlite migration per
+  open PR, `gh api` for GitHub, and the checks to run before pushing.
 
 ## [0.1.0] - 2026-09-27
 
