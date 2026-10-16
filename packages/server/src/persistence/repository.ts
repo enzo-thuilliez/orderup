@@ -190,6 +190,17 @@ export class Repository {
     return row ? toRun(row) : undefined;
   }
 
+  /** The most recent run with this trigger whose chef session is known, if any. */
+  latestRunWithSession(trigger: RunTrigger): Run | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM runs WHERE trigger = ? AND chef_session_id IS NOT NULL
+         ORDER BY started_at DESC, rowid DESC LIMIT 1`,
+      )
+      .get(trigger);
+    return row ? toRun(row) : undefined;
+  }
+
   /** Runs of a task, oldest first. */
   runsForTask(taskId: string): Run[] {
     return this.db

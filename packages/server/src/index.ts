@@ -4,7 +4,11 @@ import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { DEFAULT_PORT } from 'orderup-shared';
-import { DisabledCrewController, type CrewController } from './crew/controller.js';
+import {
+  DisabledCrewController,
+  RunnerCrewController,
+  type CrewController,
+} from './crew/controller.js';
 import { CrewRunner, type RunnerOptions } from './crew/runner.js';
 import { defaultTokenPath, generateToken, removeTokenFile, writeTokenFile } from './crew/token.js';
 import { createGuard, createRequestHandler } from './http.js';
@@ -41,9 +45,13 @@ export {
   type StationDefinition,
   type StationTool,
 } from './crew/stations.js';
+export { buildChefSystemPrompt } from './crew/chef-prompt.js';
 export {
+  assignPrompt,
   crewError,
   DisabledCrewController,
+  newTaskId,
+  RunnerCrewController,
   type CrewController,
   type CrewRequest,
   type CrewResult,
@@ -94,12 +102,15 @@ export interface ServerOptions extends StoreOptions {
   /**
    * `orderup --crew`: enables the authenticated command channel (ADR-015). The server writes a
    * fresh token to `commandTokenFile` and injects it into the kitchen page. It also opens the
-   * crew database and a `CrewRunner`, which the controller does not drive yet (#19). Without it
-   * every crew command gets `crew_disabled`, the server is the observer only and never opens
-   * the database.
+   * crew database and a `CrewRunner`, driven by a `RunnerCrewController`. Without it every
+   * crew command gets `crew_disabled`, the server is the observer only and never opens the
+   * database.
    */
   crew?: boolean;
-  /** Handles authorized crew commands. Default: `DisabledCrewController` until #19. */
+  /**
+   * Handles authorized crew commands. Default with `--crew`: a `RunnerCrewController` over the
+   * runner. Ignored without `--crew`: every command then gets `crew_disabled`.
+   */
   crewController?: CrewController;
   /** Default: `~/.orderup/command-token`. */
   commandTokenFile?: string;
@@ -164,12 +175,28 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
     }
   }
 
+  let crewDb: ReturnType<typeof openDatabase> | null = null;
+  let runner: CrewRunner | null = null;
+  let crewController: CrewController = new DisabledCrewController();
+  if (crewToken !== null) {
+    try {
+      crewDb = openDatabase(options.dbPath);
+    } catch (err) {
+      removeTokenFile(tokenFile, crewToken);
+      await new Promise((resolve) => server.close(resolve));
+      throw err;
+    }
+    const repository = new Repository(crewDb);
+    runner = new CrewRunner({ ...options.runner, repository });
+    crewController = options.crewController ?? new RunnerCrewController(runner, repository);
+  }
+
   const socket = attachWebSocket(server, {
     store,
     guard,
     serverVersion: version,
     crewToken,
-    crewController: options.crewController ?? new DisabledCrewController(),
+    crewController,
   });
 
   const projectsDir = options.projectsDir ?? defaultProjectsDir();
@@ -180,11 +207,6 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
 
   const ticker = setInterval(() => store.tick(), 15_000);
   ticker.unref();
-
-  const crewDb = options.crew ? openDatabase(options.dbPath) : null;
-  const runner = crewDb
-    ? new CrewRunner({ ...options.runner, repository: new Repository(crewDb) })
-    : null;
 
   return {
     url: `http://${HOST}:${port}`,

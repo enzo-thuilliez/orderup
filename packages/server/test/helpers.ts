@@ -1,4 +1,9 @@
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync } from 'node:fs';
 import { request } from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { ServerMessage } from 'orderup-shared';
 import { WebSocket } from 'ws';
 
@@ -69,4 +74,56 @@ export async function connect(
     ws.once('error', reject);
   });
   return { ws, messages };
+}
+
+/** The fake `claude` CLI the crew tests spawn (fixtures/fake-claude.js). */
+export const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.js', import.meta.url));
+
+/** What the fake writes to `$FAKE_CLAUDE_LOG/<pid>.json` for each run. */
+export interface FakeLog {
+  args: string[];
+  cwd: string;
+  env: Record<string, string | null>;
+  pid: number;
+  prompt: string;
+  grandchild: number | null;
+}
+
+export const GIT_ENV = {
+  ...process.env,
+  GIT_AUTHOR_NAME: 'Test',
+  GIT_AUTHOR_EMAIL: 'test@example.com',
+  GIT_COMMITTER_NAME: 'Test',
+  GIT_COMMITTER_EMAIL: 'test@example.com',
+};
+
+export function git(cwd: string, args: string[], env: NodeJS.ProcessEnv = GIT_ENV): string {
+  return execFileSync('git', args, { cwd, env, encoding: 'utf8' }).trim();
+}
+
+export function tmp(prefix: string): string {
+  return mkdtempSync(path.join(os.tmpdir(), prefix));
+}
+
+/** A repo with one commit on `main`, pushed to a bare `origin` whose HEAD is `main`. */
+export function tempRepo(): { repo: string; origin: string } {
+  const origin = path.join(tmp('orderup-origin-'), 'origin.git');
+  git(os.tmpdir(), ['init', '--bare', '-b', 'main', origin]);
+  const repo = path.join(tmp('orderup-repo-'), 'kitchen');
+  mkdirSync(repo);
+  git(repo, ['init', '-b', 'main']);
+  git(repo, ['commit', '--allow-empty', '-m', 'init']);
+  git(repo, ['remote', 'add', 'origin', origin]);
+  git(repo, ['push', '-q', 'origin', 'main']);
+  git(repo, ['remote', 'set-head', 'origin', 'main']);
+  return { repo, origin };
+}
+
+export function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }

@@ -1,4 +1,11 @@
-import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -13,13 +20,27 @@ import {
   CREW_RATE_LIMIT,
   crewError,
   defaultTokenPath,
+  isValidTaskId,
+  MAX_CONCURRENT_RUNS,
+  openDatabase,
+  Repository,
   startServer,
+  type BrigadeConfigPatch,
   type CrewController,
   type CrewRequest,
   type RunningServer,
 } from 'orderup-server';
 import { createCrewChannel } from '../src/crew/channel.js';
-import { connect, rawRequest, waitFor } from './helpers.js';
+import {
+  alive,
+  connect,
+  FAKE_CLAUDE,
+  rawRequest,
+  tempRepo,
+  tmp,
+  waitFor,
+  type FakeLog,
+} from './helpers.js';
 
 /** Records what reaches it and acks everything. */
 class SpyController implements CrewController {
@@ -93,6 +114,7 @@ describe('crew command channel', () => {
   }
 
   const token = () => readFileSync(defaultTokenPath(), 'utf8').trim();
+  const dbFile = () => path.join(tmp('orderup-db-'), 'orderup.db');
 
   const talk = (requestId: string, extra: Record<string, unknown> = {}) => ({
     type: 'talk',
@@ -109,13 +131,25 @@ describe('crew command channel', () => {
   describe('without --crew', () => {
     it('answers every crew command with crew_disabled and writes no token', async () => {
       const controller = new SpyController();
-      const { port } = await start({ crewController: controller });
+      const { port, runner } = await start({ crewController: controller });
       const k = await kitchen(port);
-      k.send(talk('r1', { token: 'anything' }));
-      k.send({ type: 'stop', requestId: 'r2', to: 'head-chef', token: 'x' });
-      expectError(await k.reply('r1'), 'crew_disabled', 'talk');
-      expectError(await k.reply('r2'), 'crew_disabled', 'stop');
+      const commands = [
+        talk('r1'),
+        { type: 'assign', requestId: 'r2', to: 'head-chef', ticket: { repo: 'o/r', number: 1 } },
+        { type: 'stop', requestId: 'r3', to: 'head-chef' },
+        { type: 'approve', requestId: 'r4', to: 'head-chef', cardId: 'c' },
+        { type: 'send-back', requestId: 'r5', to: 'head-chef', cardId: 'c', comment: 'salt' },
+      ];
+      for (const command of commands) k.send({ ...command, token: 'anything' });
+      for (const command of commands) {
+        expectError(
+          await k.reply(command.requestId),
+          'crew_disabled',
+          command.type as CrewCommandType,
+        );
+      }
       expect(controller.calls).toEqual([]);
+      expect(runner).toBeNull();
       expect(existsSync(defaultTokenPath())).toBe(false);
     });
 
@@ -273,11 +307,17 @@ describe('crew command channel', () => {
       ]);
     });
 
-    it('answers crew_disabled from the stub controller until the runner is wired', async () => {
-      const { port } = await start({ crew: true });
+    it('drives the crew runner by default: no working repo is invalid_command', async () => {
+      const { port, runner } = await start({ crew: true, dbPath: dbFile() });
       const k = await kitchen(port);
       k.send(talk('r1', { token: token() }));
-      expectError(await k.reply('r1'), 'crew_disabled', 'talk');
+      expect(await k.reply('r1')).toMatchObject({
+        type: 'error',
+        command: 'talk',
+        code: 'invalid_command',
+        message: expect.stringMatching(/no working repo/),
+      });
+      expect(runner?.activeRunIds).toEqual([]);
     });
 
     it('rate-limits crew commands per connection', async () => {
@@ -313,6 +353,199 @@ describe('crew command channel', () => {
         error: 'not_implemented',
       });
     });
+  });
+});
+
+describe('crew commands through the runner', () => {
+  let server: RunningServer | undefined;
+  const sockets: WebSocket[] = [];
+  afterEach(async () => {
+    for (const ws of sockets.splice(0)) ws.terminate();
+    await server?.close();
+    server = undefined;
+  });
+
+  /**
+   * A `--crew` server over the fake claude and a temp repo. `seed` runs on the database before
+   * the server opens it.
+   */
+  async function kitchen(
+    config: BrigadeConfigPatch = {},
+    seed: (repository: Repository) => void = () => undefined,
+  ) {
+    const { repo } = tempRepo();
+    const dbPath = path.join(tmp('orderup-db-'), 'orderup.db');
+    const db = openDatabase(dbPath);
+    const repository = new Repository(db);
+    repository.updateBrigadeConfig({ repoPath: repo, ...config });
+    seed(repository);
+    db.close();
+    const logDir = tmp('orderup-fake-');
+    server = await startServer({
+      port: 0,
+      projectsDir: false,
+      crew: true,
+      dbPath,
+      runner: {
+        claudeBin: FAKE_CLAUDE,
+        env: { ...process.env, FAKE_CLAUDE_LOG: logDir },
+        orderupDir: path.join(tmp('orderup-home-'), '.orderup'),
+      },
+    });
+    const running = server;
+    const client = await connect(running.port);
+    sockets.push(client.ws);
+    const replies = client.messages as unknown as CrewCommandReply[];
+    const t = readFileSync(defaultTokenPath(), 'utf8').trim();
+    let n = 0;
+    const logs = (): FakeLog[] =>
+      readdirSync(logDir)
+        .filter((f) => f.endsWith('.json'))
+        .map((f) => JSON.parse(readFileSync(path.join(logDir, f), 'utf8')) as FakeLog);
+    return {
+      runner: running.runner!,
+      logs,
+      /** The fake's log of one run, once it has one (and, with `grandchild`, once it spawned). */
+      log: (match: (log: FakeLog) => boolean) => waitFor(() => logs().find(match), 10_000),
+      async send(command: Record<string, unknown>): Promise<CrewCommandReply> {
+        const requestId = `r${++n}`;
+        client.ws.send(JSON.stringify({ to: 'head-chef', token: t, ...command, requestId }));
+        return waitFor(
+          () => replies.find((m) => 'requestId' in m && m.requestId === requestId),
+          10_000,
+        );
+      },
+      idle: () => waitFor(() => running.runner!.activeRunIds.length === 0 || undefined, 10_000),
+    };
+  }
+
+  const arg = (log: FakeLog, flag: string) =>
+    log.args.includes(flag) ? log.args[log.args.indexOf(flag) + 1] : undefined;
+  const runIdOf = (reply: CrewCommandReply) => {
+    if (reply.type !== 'ack' || !('runId' in reply) || !reply.runId) {
+      throw new Error(`no runId: ${JSON.stringify(reply)}`);
+    }
+    return reply.runId;
+  };
+
+  it('talk starts a chef run with a fresh task and acks its runId', async () => {
+    const k = await kitchen({ stationCap: 3, globalCap: 7 });
+    const reply = await k.send({ type: 'talk', text: 'scenario:ok make the soup' });
+    expect(reply).toEqual({
+      type: 'ack',
+      requestId: 'r1',
+      command: 'talk',
+      runId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    });
+    const log = await k.log(() => true);
+    // The user's text on stdin, the chef's instructions as --append-system-prompt.
+    expect(log.prompt).toBe('scenario:ok make the soup');
+    expect(log.args).not.toContain('scenario:ok make the soup');
+    const taskId = path.basename(log.cwd);
+    expect(taskId).toMatch(/^t_[0-9A-HJKMNP-TV-Z]{26}$/);
+    expect(isValidTaskId(taskId)).toBe(true);
+    const system = arg(log, '--append-system-prompt')!;
+    expect(system).toContain(taskId);
+    expect(system).toContain('At most 3 cooks at the same station');
+    expect(system).toContain('At most 7 cooks in total');
+    expect(arg(log, '--resume')).toBeUndefined();
+    await k.idle();
+  });
+
+  it('a second talk resumes the chef session of the first, in a new task', async () => {
+    const k = await kitchen();
+    runIdOf(await k.send({ type: 'talk', text: 'scenario:ok first' }));
+    const first = await k.log((l) => l.prompt.endsWith('first'));
+    await k.idle();
+    runIdOf(await k.send({ type: 'talk', text: 'scenario:ok second' }));
+    const second = await k.log((l) => l.prompt.endsWith('second'));
+    expect(arg(second, '--resume')).toBe(`sess-${first.pid}`);
+    expect(path.basename(second.cwd)).not.toBe(path.basename(first.cwd));
+    await k.idle();
+  });
+
+  it('assign acks a runId and cardId = taskId, and only names the ticket', async () => {
+    const k = await kitchen();
+    const reply = await k.send({ type: 'assign', ticket: { repo: 'o/r', number: 20 } });
+    expect(reply).toMatchObject({ type: 'ack', command: 'assign', runId: expect.any(String) });
+    const log = await k.log(() => true);
+    expect(reply).toMatchObject({ cardId: path.basename(log.cwd) });
+    expect(log.prompt).toContain('o/r#20');
+    expect(log.prompt).toContain('gh issue view 20 --repo o/r');
+    expect(arg(log, '--append-system-prompt')).toContain(path.basename(log.cwd));
+    await k.idle();
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'stop kills the running chef and acks its runId; with nothing running it acks null',
+    async () => {
+      const k = await kitchen();
+      const runId = runIdOf(await k.send({ type: 'talk', text: 'scenario:slow' }));
+      const log = await k.log((l) => l.grandchild !== null);
+      expect(alive(log.pid)).toBe(true);
+      expect(await k.send({ type: 'stop' })).toMatchObject({ type: 'ack', command: 'stop', runId });
+      expect(alive(log.pid)).toBe(false);
+      await waitFor(() => !alive(log.grandchild!) || undefined, 5000);
+      expect(k.runner.activeRunIds).toEqual([]);
+      expect(await k.send({ type: 'stop' })).toMatchObject({
+        type: 'ack',
+        command: 'stop',
+        runId: null,
+      });
+    },
+  );
+
+  it('stop picks the most recently started run', async () => {
+    const k = await kitchen();
+    const older = runIdOf(await k.send({ type: 'talk', text: 'scenario:slow older' }));
+    const newer = runIdOf(await k.send({ type: 'talk', text: 'scenario:slow newer' }));
+    expect(await k.send({ type: 'stop' })).toMatchObject({ runId: newer });
+    expect(k.runner.activeRunIds).toEqual([older]);
+  });
+
+  it(`a ${MAX_CONCURRENT_RUNS + 1}th concurrent talk is busy, and concurrent talks never share a session`, async () => {
+    const k = await kitchen();
+    for (let i = 0; i < MAX_CONCURRENT_RUNS; i++) {
+      runIdOf(await k.send({ type: 'talk', text: `scenario:slow ${i}` }));
+    }
+    expect(await k.send({ type: 'talk', text: 'scenario:slow extra' })).toMatchObject({
+      type: 'error',
+      command: 'talk',
+      code: 'busy',
+    });
+    const logs = await waitFor(
+      () => (k.logs().length === MAX_CONCURRENT_RUNS ? k.logs() : undefined),
+      10_000,
+    );
+    expect(logs.map((l) => arg(l, '--resume'))).toEqual(logs.map(() => undefined));
+  });
+
+  it('a talk over the daily cap gets usage_cap_reached', async () => {
+    const k = await kitchen({ dailyCapUsd: 2 }, (repository) => {
+      repository.startRun({ id: 'old', trigger: 'talk' });
+      repository.addUsage({ runId: 'old', costUsd: 2 });
+    });
+    expect(await k.send({ type: 'talk', text: 'scenario:ok' })).toMatchObject({
+      type: 'error',
+      command: 'talk',
+      code: 'usage_cap_reached',
+    });
+    expect(k.logs()).toEqual([]);
+  });
+
+  it('approve and send-back know no card yet', async () => {
+    const k = await kitchen();
+    expect(await k.send({ type: 'approve', cardId: 't_1' })).toMatchObject({
+      type: 'error',
+      command: 'approve',
+      code: 'unknown_card',
+    });
+    expect(await k.send({ type: 'send-back', cardId: 't_1', comment: 'salt' })).toMatchObject({
+      type: 'error',
+      command: 'send-back',
+      code: 'unknown_card',
+    });
+    expect(k.logs()).toEqual([]);
   });
 });
 
