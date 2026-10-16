@@ -1,7 +1,9 @@
 // Probes the real claude CLI for the crew runner (#19, ADR-016 Follow-ups). Runs `claude -p`
 // with the head chef's arguments in a throwaway git repo under the temp dir and prints what it
 // observed per case. Uses your logged-in CLI: on a subscription it spends usage, with an API key
-// it spends money (haiku, a few cents in all).
+// it spends money. Cases run on haiku, except two settings-merge runs on your default model
+// (they test that your model setting survives --settings): about $0.55 API-equivalent in all
+// when the default model is Opus, most of it those two runs.
 //
 // Usage: npm run build && node scripts/probe-claude-cli.mjs [case ...]
 // Cases: agents (a, b), worktree-branch (c), settings-merge (d), append-system-prompt (e),

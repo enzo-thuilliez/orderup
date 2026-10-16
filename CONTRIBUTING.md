@@ -91,7 +91,9 @@ node scripts/probe-claude-cli.mjs agents budget    # some: agents, worktree-bran
 ```
 
 - It makes real runs with your login: on a subscription they use your usage, with an API key
-  they cost money (a few cents with haiku).
+  they cost money. Cases use haiku, except the two `settings-merge` runs that check your own
+  model setting and so run on your default model: about $0.55 API-equivalent for every case
+  when your default model is Opus, most of it those two runs. `flags` alone costs nothing.
 - Each case runs in a throwaway git repo under the temp dir, never in this checkout. Set
   `ORDERUP_PROBE_KEEP=1` to keep those repos for a look.
 - It never writes `~/.claude/settings.json`; your settings, hooks and connectors still load,
