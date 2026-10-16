@@ -136,11 +136,7 @@ export class TranscriptParser {
 
 export interface TranscriptTailOptions {
   projectsDir: string;
-  /**
-   * Every event from one read of a file up to its current end, in order. A transcript replayed
-   * at startup arrives as one batch, so the store never shows its intermediate states.
-   */
-  onEvents: (events: SessionEvent[]) => void;
+  onEvent: (event: SessionEvent) => void;
   /** At startup, only files modified this recently are read. Default: 1 hour. */
   recentMs?: number;
   /** Retry delay while `projectsDir` doesn't exist yet. Default: 5 s. */
@@ -245,7 +241,6 @@ export class TranscriptTail {
         t.rest = '';
         t.decoder = new StringDecoder('utf8');
       }
-      const events: SessionEvent[] = [];
       const chunk = Buffer.alloc(Math.min(Math.max(size - t.offset, 0), 1 << 20));
       while (t.offset < size && !this.#stopped) {
         const { bytesRead } = await handle.read(
@@ -259,21 +254,21 @@ export class TranscriptTail {
         const lines = (t.rest + t.decoder.write(chunk.subarray(0, bytesRead))).split('\n');
         t.rest = lines.pop() ?? '';
         for (const line of lines) {
-          if (line.trim()) events.push(...this.#parser.parse(line, t.sessionId));
+          if (line.trim()) this.#emit(this.#parser.parse(line, t.sessionId));
         }
       }
-      this.#emit(events);
     } finally {
       await handle.close();
     }
   }
 
   #emit(events: SessionEvent[]): void {
-    if (events.length === 0) return;
-    try {
-      this.#options.onEvents(events);
-    } catch {
-      // Keep tailing even if a consumer throws.
+    for (const event of events) {
+      try {
+        this.#options.onEvent(event);
+      } catch {
+        // Keep tailing even if a consumer throws.
+      }
     }
   }
 

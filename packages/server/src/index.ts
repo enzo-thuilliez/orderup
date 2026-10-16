@@ -201,10 +201,7 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
 
   const projectsDir = options.projectsDir ?? defaultProjectsDir();
   const tail = projectsDir
-    ? new TranscriptTail({
-        projectsDir,
-        onEvents: (events) => store.applyAll(events, 'transcript'),
-      })
+    ? new TranscriptTail({ projectsDir, onEvent: (event) => store.apply(event, 'transcript') })
     : null;
   void tail?.start().catch(() => undefined);
 

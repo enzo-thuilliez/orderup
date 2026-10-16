@@ -78,19 +78,6 @@ describe('startServer', () => {
     await waitFor(() => messages.find((m) => m.type === 'session.remove'));
   });
 
-  it('ignores sessions in a throwaway repo under the temp dir', async () => {
-    const { port, store } = await start();
-    const { messages } = await kitchen(port);
-    const scratch = path.join(os.tmpdir(), 'orderup-scratch-repo');
-    await postHook(port, { session_id: 'tmp', hook_event_name: 'UserPromptSubmit', cwd: scratch });
-    await postHook(port, { session_id: 'real', hook_event_name: 'UserPromptSubmit', cwd: '/x' });
-    await waitFor(() => store.get('real'));
-    expect(store.get('tmp')).toBeUndefined();
-    await waitFor(() => messages.find((m) => m.type === 'session.upsert'));
-    const upserted = messages.flatMap((m) => (m.type === 'session.upsert' ? [m.session] : []));
-    expect(upserted.map((s) => s.sessionId)).toEqual(['real']);
-  });
-
   it('includes existing sessions in the snapshot', async () => {
     const { port } = await start();
     await postHook(port, { session_id: 's1', hook_event_name: 'Stop', cwd: '/x' });

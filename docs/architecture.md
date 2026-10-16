@@ -41,7 +41,7 @@ working ──Notification / PermissionRequest──▶ waiting
    │                                            │
    └──Stop──▶ done ──(quiet 5 min)──▶ idle ─────┘
 SessionEnd (any state) ──▶ removed
-idle for 10 min ──▶ walks out (removed)
+idle for 2 h ──▶ forgotten
 ```
 
 ### Hook → state
@@ -64,29 +64,19 @@ Background subagents return from `Task` immediately, so their commis leaves earl
 
 ### Timers (store)
 
-| Condition                           | Effect          | In the kitchen          |
-| ----------------------------------- | --------------- | ----------------------- |
-| `done` with no events for 5 min     | `idle`          | Coffee break out back   |
-| `working` with no events for 30 min | `idle`          | Terminal closed quietly |
-| `idle` with no events for 10 min    | session removed | Cook walks out          |
+| Condition                           | Effect            | In the kitchen          |
+| ----------------------------------- | ----------------- | ----------------------- |
+| `done` with no events for 5 min     | `idle`            | Coffee break out back   |
+| `working` with no events for 30 min | `idle`            | Terminal closed quietly |
+| `idle` with no events for 2 h       | session forgotten | Cook goes home          |
 
-`waiting` never times out: the bell keeps ringing until someone answers. A cook who walked out
-comes back with the next event for their session.
-
-Each timer fires at the time it fell due (`updatedAt` + delay), not at the tick that notices
-it, and every overdue timer runs at once. So a session whose last transcript line is old
-enough expires before it is stored, and is never broadcast.
-
-Sessions whose `cwd` is under `os.tmpdir()` (symlinks resolved) are ignored: throwaway repos
-never get a cook. If such a cwd only shows up on a later event, the cook is removed then.
+`waiting` never times out: the bell keeps ringing until someone answers.
 
 ### Transcripts
 
 The tail watches `$CLAUDE_CONFIG_DIR/projects` (default `~/.claude/projects`) recursively. At
 startup it reads transcripts modified in the last hour; after that it reads any transcript
-that changes, from the beginning the first time. Each read up to the file's current end goes
-to the store as one batch, which broadcasts only the net change per session: a replayed
-transcript never flashes its intermediate states.
+that changes, from the beginning the first time.
 
 - **Tokens:** every assistant line's `message.usage`, deduplicated by `message.id` (one
   message is written over several lines), summed per `sessionId`. Sidechain (subagent) lines

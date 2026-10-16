@@ -1,5 +1,4 @@
-import { existsSync, realpathSync } from 'node:fs';
-import os from 'node:os';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { SessionView } from 'orderup-shared';
 import { reduce, type SessionEvent } from './machine.js';
@@ -14,18 +13,13 @@ export interface StoreOptions {
   idleAfterMs?: number;
   /** `working` → `idle` after this long without events (terminal closed without SessionEnd). */
   staleAfterMs?: number;
-  /** Idle sessions walk out and are dropped after this long. Default: {@link LEAVE_AFTER_MS}. */
-  leaveAfterMs?: number;
-  /** Sessions in a matching cwd are never shown. Default: anything under `os.tmpdir()`. */
-  ignoreCwd?: (cwd: string) => boolean;
+  /** Idle sessions are forgotten (cook goes home) after this long. */
+  forgetAfterMs?: number;
   repoOf?: (cwd: string) => string | null;
   now?: () => number;
 }
 
 const MINUTE = 60_000;
-
-/** An observed cook idle for this long walks out. A new event brings them back. */
-export const LEAVE_AFTER_MS = 10 * MINUTE;
 
 /**
  * Holds live sessions, feeds events through the reducer and tells subscribers what changed.
@@ -37,44 +31,22 @@ export class SessionStore {
   readonly #sessions = new Map<string, SessionView>();
   readonly #hooked = new Set<string>();
   readonly #listeners = new Set<(change: StoreChange) => void>();
-  /** During `applyAll`: each touched session as it was before the batch. */
-  #batch: Map<string, SessionView | undefined> | null = null;
   readonly #repoCache = new Map<string, string | null>();
   readonly #idleAfterMs: number;
   readonly #staleAfterMs: number;
-  readonly #leaveAfterMs: number;
-  readonly #ignoreCwd: (cwd: string) => boolean;
+  readonly #forgetAfterMs: number;
   readonly #repoOf: (cwd: string) => string | null;
   readonly #now: () => number;
 
   constructor(options: StoreOptions = {}) {
     this.#idleAfterMs = options.idleAfterMs ?? 5 * MINUTE;
     this.#staleAfterMs = options.staleAfterMs ?? 30 * MINUTE;
-    this.#leaveAfterMs = options.leaveAfterMs ?? LEAVE_AFTER_MS;
-    this.#ignoreCwd = options.ignoreCwd ?? isUnderTmpdir;
+    this.#forgetAfterMs = options.forgetAfterMs ?? 120 * MINUTE;
     this.#repoOf = options.repoOf ?? gitRepoName;
     this.#now = options.now ?? Date.now;
   }
 
   apply(event: SessionEvent, source: EventSource): void {
-    this.applyAll([event], source);
-  }
-
-  /** Applies events in order, then tells subscribers only the net change per session. */
-  applyAll(events: SessionEvent[], source: EventSource): void {
-    const batch = new Map<string, SessionView | undefined>();
-    this.#batch = batch;
-    try {
-      for (const event of events) this.#applyOne(event, source);
-    } finally {
-      this.#batch = null;
-      for (const [sessionId, before] of batch) {
-        this.#notify(sessionId, before, this.#sessions.get(sessionId));
-      }
-    }
-  }
-
-  #applyOne(event: SessionEvent, source: EventSource): void {
     if (source === 'hook') {
       this.#hooked.add(event.sessionId);
     } else if (this.#hooked.has(event.sessionId) && event.type !== 'usage') {
@@ -83,10 +55,17 @@ export class SessionStore {
     this.#commit(event);
   }
 
-  /** Runs the timers: coffee breaks, stale sessions, cooks walking out. */
+  /** Runs the timers: coffee breaks, stale sessions, cooks going home. */
   tick(now = this.#now()): void {
     for (const s of [...this.#sessions.values()]) {
-      this.#store(s.sessionId, s, this.#settle(s, now));
+      const quiet = now - s.updatedAt;
+      if (s.state === 'done' && quiet >= this.#idleAfterMs) {
+        this.#commit({ sessionId: s.sessionId, at: now, type: 'idle' });
+      } else if (s.state === 'working' && quiet >= this.#staleAfterMs) {
+        this.#commit({ sessionId: s.sessionId, at: now, type: 'idle' });
+      } else if (s.state === 'idle' && quiet >= this.#forgetAfterMs) {
+        this.#commit({ sessionId: s.sessionId, at: now, type: 'end' });
+      }
     }
   }
 
@@ -105,62 +84,21 @@ export class SessionStore {
 
   #commit(event: SessionEvent): void {
     const prev = this.#sessions.get(event.sessionId);
-    const cwd = prev?.cwd || event.cwd;
-    if (cwd && this.#ignoreCwd(cwd)) {
-      // Throwaway repo under the temp dir: never shown.
-      this.#store(event.sessionId, prev, null);
-      return;
-    }
     const withRepo =
       event.cwd !== undefined && event.repo === undefined && !prev?.repo
         ? { ...event, repo: this.#cachedRepo(event.cwd) }
         : event;
     const next = reduce(prev, withRepo);
-    // Timers already due (a transcript replayed at startup) run before anyone sees the session,
-    // so a long-gone cook is never broadcast.
-    this.#store(event.sessionId, prev, next && this.#settle(next, this.#now()));
-  }
 
-  #store(sessionId: string, prev: SessionView | undefined, next: SessionView | null): void {
     if (next === null) {
-      this.#hooked.delete(sessionId);
-      this.#sessions.delete(sessionId);
-    } else {
-      this.#sessions.set(sessionId, next);
+      this.#hooked.delete(event.sessionId);
+      if (prev && this.#sessions.delete(event.sessionId)) {
+        this.#emit({ type: 'remove', sessionId: event.sessionId });
+      }
+      return;
     }
-    if (!this.#batch) this.#notify(sessionId, prev, next ?? undefined);
-    else if (!this.#batch.has(sessionId)) this.#batch.set(sessionId, prev);
-  }
-
-  #notify(sessionId: string, prev: SessionView | undefined, next: SessionView | undefined): void {
-    if (!next) {
-      if (prev) this.#emit({ type: 'remove', sessionId });
-    } else if (!prev || !sameView(prev, next)) {
-      this.#emit({ type: 'upsert', session: next });
-    }
-  }
-
-  /** Applies every timer due by `now`, each at the time it fell due. */
-  #settle(session: SessionView, now: number): SessionView | null {
-    let s: SessionView | null = session;
-    for (let timer = this.#timer(s); s && timer && timer.at <= now; timer = s && this.#timer(s)) {
-      s = reduce(s, { sessionId: s.sessionId, at: timer.at, type: timer.type });
-    }
-    return s;
-  }
-
-  /** The next timer for a session, or null when it never times out (`waiting`). */
-  #timer(s: SessionView): { type: 'idle' | 'end'; at: number } | null {
-    switch (s.state) {
-      case 'done':
-        return { type: 'idle', at: s.updatedAt + this.#idleAfterMs };
-      case 'working':
-        return { type: 'idle', at: s.updatedAt + this.#staleAfterMs };
-      case 'idle':
-        return { type: 'end', at: s.updatedAt + this.#leaveAfterMs };
-      case 'waiting':
-        return null;
-    }
+    this.#sessions.set(next.sessionId, next);
+    if (!prev || !sameView(prev, next)) this.#emit({ type: 'upsert', session: next });
   }
 
   #cachedRepo(cwd: string): string | null {
@@ -187,25 +125,6 @@ export class SessionStore {
 /** Ignores `updatedAt` so pure timestamp bumps don't flood the WebSocket. */
 function sameView(a: SessionView, b: SessionView): boolean {
   return JSON.stringify({ ...a, updatedAt: 0 }) === JSON.stringify({ ...b, updatedAt: 0 });
-}
-
-const TMP_DIRS = tmpDirs();
-
-/** Whether `cwd` is under the OS temp dir, symlinks resolved (macOS `/var` → `/private/var`). */
-export function isUnderTmpdir(cwd: string): boolean {
-  const dir = path.resolve(cwd);
-  return TMP_DIRS.some((tmp) => dir === tmp || dir.startsWith(tmp + path.sep));
-}
-
-function tmpDirs(): string[] {
-  const tmp = path.resolve(os.tmpdir());
-  let real = tmp;
-  try {
-    real = realpathSync(tmp);
-  } catch {
-    // Keep the unresolved path.
-  }
-  return [...new Set([tmp, real])];
 }
 
 /** Name of the git repository containing `cwd` (worktrees included), or null. */
