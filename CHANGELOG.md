@@ -55,6 +55,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   check first, branch and PR body shape, CHANGELOG and conflict rules, one sqlite migration per
   open PR, `gh api` for GitHub, and the checks to run before pushing.
 
+### Fixed
+
+- Stale and throwaway cooks leave the kitchen: an idle cook walks out after 10 minutes,
+  sessions already stale when OrderUp starts never appear, and sessions under the temp dir
+  are ignored.
+
 ## [0.1.0] - 2026-09-27
 
 First release on npm: `npx orderup-cli`.
