@@ -90,7 +90,7 @@ export function assignPrompt(ticket: TicketRef): string {
   const ref = `${ticket.repo}#${ticket.number}`;
   return (
     `Work on the GitHub issue ${ref}.\n` +
-    `Read it first with \`gh issue view ${ticket.number} --repo ${ticket.repo} --comments\`, ` +
+    `Read it first with \`gh issue view ${ticket.number} --repo ${ticket.repo} --json title,body,labels,comments\`, ` +
     `then do what it asks and open a pull request that closes ${ref}.\n`
   );
 }

@@ -488,7 +488,8 @@ describe('crew commands through the runner', () => {
     const log = await k.log(() => true);
     expect(reply).toMatchObject({ cardId: path.basename(log.cwd) });
     expect(log.prompt).toContain('o/r#20');
-    expect(log.prompt).toContain('gh issue view 20 --repo o/r');
+    expect(log.prompt).toContain('`gh issue view 20 --repo o/r --json title,body,labels,comments`');
+    expect(log.prompt).not.toContain('--comments');
     expect(arg(log, '--append-system-prompt')).toContain(path.basename(log.cwd));
     await k.idle();
   });
