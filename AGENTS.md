@@ -103,7 +103,9 @@ Run lint, format:check, typecheck, test, build and smoke before proposing a PR. 
 - Hooks installed by OrderUp must never slow down or break Claude Code: short timeout, silent
   failure, exit code 0.
 - No external assets: geometry is procedural, colours come from `web/src/palette.ts`.
-- Prompt text from hooks or transcripts is never stored or broadcast.
+- Prompt text from hooks or transcripts is never stored or broadcast. The one exception
+  (ADR-017): the cook panel's live terminal may show it over the token-authenticated crew
+  channel, held in memory only. Without `--crew` it shows none.
 
 ## When you change things
 

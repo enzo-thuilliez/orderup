@@ -54,6 +54,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Docs: a "Working from an issue" section in `AGENTS.md` for coding agents: dependencies to
   check first, branch and PR body shape, CHANGELOG and conflict rules, one sqlite migration per
   open PR, `gh api` for GitHub, and the checks to run before pushing.
+- ADR-017: one kitchen per repo, picked on arrival from local checkouts, with a HUD (cooks,
+  cost, tokens, spend, plan limits), a cook panel with a live terminal and a Changes tab, and
+  Issues, Pull requests and reports boards on the walls. Prompt text may show in the terminal
+  only over the authenticated crew channel, from memory.
 
 ### Fixed
 
