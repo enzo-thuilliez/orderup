@@ -12,3 +12,6 @@ coverage/
 # orderup-cli package build (scripts/bundle-cli.mjs)
 packages/cli/README.md
 packages/cli/LICENSE
+
+# scripts/probe-claude-cli.mjs output (stream-json of real runs)
+scripts/.probe-out/

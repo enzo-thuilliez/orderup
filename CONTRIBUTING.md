@@ -74,3 +74,30 @@ Use a spare port so a kitchen already running on 7717 keeps working.
 - When a coding agent is working in your checkout, `dist/` may hold half-finished code.
   Review and try its branches in a separate worktree
   (`git worktree add ../orderup-review <branch>`), not in the checkout it is editing.
+
+## Probing the claude CLI
+
+Crew runs the user's own `claude` CLI, whose flags and stream-json output change between
+versions. `scripts/probe-claude-cli.mjs` runs the head chef's arguments (`buildChefArgs`
+from the built server, with `--model haiku --max-turns 6`) against your logged-in CLI and
+reports what it saw. It needs Claude Code 2.1.217 or later.
+
+```sh
+npm run build
+node scripts/probe-claude-cli.mjs                  # every case
+node scripts/probe-claude-cli.mjs agents budget    # some: agents, worktree-branch,
+                                                   # settings-merge, append-system-prompt,
+                                                   # budget, flags
+```
+
+- It makes real runs with your login: on a subscription they use your usage, with an API key
+  they cost money. Cases use haiku, except the two `settings-merge` runs that check your own
+  model setting and so run on your default model: about $0.55 API-equivalent for every case
+  when your default model is Opus, most of it those two runs. `flags` alone costs nothing.
+- Each case runs in a throwaway git repo under the temp dir, never in this checkout. Set
+  `ORDERUP_PROBE_KEEP=1` to keep those repos for a look.
+- It never writes `~/.claude/settings.json`; your settings, hooks and connectors still load,
+  like for any `claude` run.
+- Raw stream-json goes to `scripts/.probe-out/` (gitignored) and may hold file contents and
+  paths of the throwaway repos; the summary goes to stdout and `summary.json`.
+- Record what changed in the Follow-ups of ADR-016 in [DECISIONS.md](DECISIONS.md).
