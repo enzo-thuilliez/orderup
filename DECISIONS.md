@@ -298,7 +298,8 @@ ones, supersede them instead.
 ## ADR-016: Head chef and brigade model
 
 - **Status:** accepted (2026-10-15); refines the crew member model of ADR-008 and ADR-015.
-  ADR-015's runtime, auth, billing, budget cap and command channel stay as decided.
+  ADR-015's runtime, auth, billing, budget cap and command channel stay as decided. Point 7
+  amended by ADR-017.
 - **Context:** ADR-015 described crew as free-form members the user chats with one by one.
   That does not read well in the kitchen (any cook could be doing anything) and makes the user
   manage every member. The V1 product decision (2026-10-15) is a brigade: the user talks only
@@ -411,6 +412,9 @@ ones, supersede them instead.
     sends no command. Peek data lives in memory only. Prompt text is never stored or
     broadcast: not the user's prompts, and not the `prompt` input of the chef's `Agent`
     calls (the dispatch is shown by its short `description` only).
+    _Amended by [ADR-017](#adr-017-kitchen-per-repo-hud-and-live-cook-terminal): the cook
+    panel's live terminal replaces the peek and may show prompt text over the crew channel
+    only, in memory only._
   - **8. Identifying stations.** Documented fields are enough; no extra protocol is needed
     in the chef's output:
     - Hooks fired inside a subagent carry the common fields `agent_id` and `agent_type`;
@@ -608,3 +612,90 @@ ones, supersede them instead.
     - g. Flags: 2.1.301. `-p --output-format stream-json` without `--verbose` exits 1 with no
       stdout; the CLI says stream-json requires `--verbose` in print mode. Runner change:
       none, keep `--verbose`.
+
+## ADR-017: Kitchen per repo, HUD and live cook terminal
+
+- **Status:** accepted (2026-10-16); amends ADR-016 point 7 (peek) and the AGENTS.md hard
+  rule on prompt text. Takes the per-repo kitchen of #33 without its theme dropdown.
+  ADR-015's runtime, auth and command channel and ADR-016's brigade stay as decided.
+- **Context:** Today every observed session on the machine lands in one kitchen, and clicking
+  a cook shows a short peek. With several repos and a crew, the kitchen is crowded, and the
+  user cannot follow what a cook is actually doing. [agent-office](https://github.com/AgentSystemLabs/agent-office)
+  (MIT, AgentSystemLabs) shows a workable shape: pick a project, see its agents with their
+  status and cost, open one to watch its live terminal and its diff. This ADR records that
+  direction in kitchen form, with the current designs. No code or assets are copied from it.
+- **Decision:**
+  - **1. Repo picker on arrival.** The page first lists repos, then opens the chosen repo's
+    kitchen. The list comes only from local data: the session `cwd`s found under
+    `~/.claude/projects` (transcripts and hooks) and `brigade_config.repo_path`, each resolved
+    to its git checkout. OrderUp never clones and makes no network call to build it (hard
+    rule). A repo is identified by its git common directory, so a checkout and all of its
+    worktrees are one repo. Sessions whose `cwd` is in no git repo are grouped under one
+    "Other" entry. The user can go back to the picker from the HUD.
+  - **2. What a kitchen shows.** The repo's kitchen is a normal kitchen with the current design
+    and layout. It shows the observed sessions whose `cwd` is in that repo or one of its
+    worktrees, `~/.orderup/worktrees/<repo>/…` (chef task worktrees) and
+    `.claude/worktrees/…` (station worktrees) included, plus the crew when the brigade's repo
+    is this one (one brigade per working repo, ADR-016).
+  - **3. HUD.** A DOM overlay (ADR-010) shows the repo, the crew and observed cooks with their
+    state, cost and tokens, today's and all-time spend, and the Claude plan limits (5-hour
+    session and week).
+    - Spend is API-equivalent USD (ADR-015). Crew spend comes from the `usage` table. Observed
+      spend is estimated from transcript token counts with a price table bundled in
+      `orderup-shared`, and labelled as an estimate. All-time spend is computed from the
+      transcripts on disk plus `usage`; no new store holds observed history.
+    - Plan limits are read from local data only (hook payloads, transcripts or the runner's
+      stream-json), never by calling an Anthropic API from the observer path. Which field
+      carries them is probed with `scripts/probe-claude-cli.mjs` before the HUD shows them
+      (Follow-ups). When no local source has them, the HUD shows them as unknown.
+  - **4. Cook panel: live terminal and Changes.** Clicking a cook opens a panel that replaces
+    ADR-016's peek.
+    - **Terminal tab:** the session's log rendered like Claude Code: assistant text, tool calls,
+      tool results and edit diffs, live, built from hooks and the transcript tail. It makes no
+      LLM call.
+    - **Changes tab:** `git diff` of the cook's working directory (its worktree for a
+      station), run locally with `execFile`.
+    - The head chef's panel has the talk input. Every other cook's panel is read-only:
+      ADR-016 point 6 is unchanged, the user talks only to the head chef.
+    - Terminal and Changes data are held in memory, sent only to the client that opened the
+      panel, and never stored. They are not part of the snapshot broadcast to every client.
+  - **5. Prompt text (amends ADR-016 point 7 and the hard rule).** The terminal tab may show
+    prompt text live, the user's prompts and the `prompt` input of `Agent` calls, under these
+    conditions only:
+    - only over the token-authenticated crew channel (ADR-015), so only when OrderUp runs with
+      `--crew`;
+    - kept in memory only, never written to sqlite, logs or any file;
+    - never broadcast to unauthenticated clients, and never sent in the snapshot or session
+      messages.
+
+    Without `--crew` the panel shows no prompt text: prompts are replaced by a placeholder.
+
+  - **6. Boards on the walls.** The current kitchen's walls hold three boards: Issues (the
+    ticket source of ADR-016), Pull requests, and head chef reports (the report cards of #31).
+    Issues and pull requests come from `gh` on the crew path. Without `--crew` those two
+    boards stay empty with a hint, since the observer path makes no network call.
+  - **7. Later.** Themes and the theme dropdown, the toon art pass (#32), the Chinese theme kit
+    (#34) and expressive characters are out of scope here.
+- **Alternatives considered:**
+  - One kitchen for every session, with a repo filter: keeps today's scene, but crowds it and
+    makes the crew hard to find. Rejected.
+  - Repos from a config list the user maintains: rejected, it breaks zero config. The repos are
+    the ones the user already works in.
+  - Keeping prompt text out of the terminal entirely: safest, but the terminal would not read
+    like Claude Code and a chef's dispatch would show no instruction. Allowed behind the token
+    instead (point 5).
+  - Broadcasting terminal data with the sessions: simpler, but sends tool results and file
+    contents to every open page. Rejected in favour of per-panel delivery.
+- **Consequences:**
+  - The server resolves `cwd`s to git checkouts (`git rev-parse --git-common-dir` through
+    `execFile`) and caches the result per directory.
+  - Tool results and diffs reach the browser for the first time. They stay out of the
+    broadcast and out of storage, like peek data before them.
+  - SECURITY.md and docs/architecture.md describe the prompt text exception, and the hard rule
+    in AGENTS.md points here.
+  - #33 implements points 1 and 2 without a theme dropdown. The HUD, the cook panel and the
+    boards land in their own issues.
+- **Follow-ups:**
+  - Plan limits: find the local field (statusline input, hook payload or stream-json) with
+    `scripts/probe-claude-cli.mjs` and record it here before the HUD shows them.
+  - The observed price table: where it comes from and how it is updated when prices change.

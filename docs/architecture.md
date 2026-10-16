@@ -318,6 +318,24 @@ The brigade is decided in [ADR-016](../DECISIONS.md#adr-016-head-chef-and-brigad
 - Clicking a cook opens a read-only peek built from hooks and transcripts, with no LLM call.
 - A theme only changes visuals, never station ids, prompts or tools.
 
+### Kitchen per repo, HUD and cook terminal (ADR-017)
+
+Decided in
+[ADR-017](../DECISIONS.md#adr-017-kitchen-per-repo-hud-and-live-cook-terminal), not built
+yet:
+
+- On arrival the user picks a repo, from session `cwd`s under `~/.claude/projects` and
+  `brigade_config.repo_path` (no clone, no network). Its kitchen shows the observed sessions
+  in that repo or its worktrees (`~/.orderup/worktrees/<repo>/…` included) plus its crew.
+- A HUD shows the repo, the cooks with state, cost and tokens, today's and all-time spend and
+  the plan limits (5-hour session, week), from local data only.
+- Clicking a cook opens a panel with a live terminal (text, tool calls, results, edit diffs)
+  and a Changes tab (`git diff`). Only the head chef's panel has a talk input. Panel data is
+  sent to the requesting client only and never stored.
+- Prompt text may appear in the terminal only over the token-authenticated crew channel,
+  from memory. Without `--crew` it never does.
+- The walls hold three boards: Issues, Pull requests and head chef reports.
+
 ### Tickets
 
 `packages/server/src/sources/tickets.ts` (`TicketSource`) turns open GitHub issues into order

@@ -21,7 +21,9 @@ We aim to acknowledge reports within a week. Only the latest `main` is supported
   - Transcripts under `~/.claude/projects/**/*.jsonl`.
 
   From these, OrderUp derives session state, tool names, file paths, commands, working
-  directories and token counts. Prompt text is ignored: never stored or broadcast.
+  directories and token counts. Prompt text is never stored or broadcast. With
+  `orderup --crew` only, the cook panel's live terminal shows it to the authenticated page,
+  from memory (ADR-017).
 
 - **Data written:** `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json`), only
   when you confirm a hook install or uninstall, after showing the diff, with a backup
