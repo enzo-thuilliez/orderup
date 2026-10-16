@@ -54,6 +54,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Docs: a "Working from an issue" section in `AGENTS.md` for coding agents: dependencies to
   check first, branch and PR body shape, CHANGELOG and conflict rules, one sqlite migration per
   open PR, `gh api` for GitHub, and the checks to run before pushing.
+
+### Fixed
+
+- Stale and throwaway cooks leave the kitchen: an idle cook walks out after 10 minutes,
+  sessions already stale when OrderUp starts never appear, and sessions under the temp dir
+  are ignored.
 - Server: the crew runner, finished. The head chef and its stations show up in the kitchen
   as crew cooks. Writing stations can edit and commit without a prompt they cannot answer
   (never push), denied tool calls and station branches are reported, a chef run keeps going
