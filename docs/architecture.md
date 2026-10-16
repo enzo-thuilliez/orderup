@@ -251,7 +251,8 @@ Defined in `packages/shared/src/protocol.ts`.
   SECURITY.md).
 - **Controller.** Valid commands go to a `CrewController` (`talk`, `assign`, `stop`,
   `approve`, `sendBack`) without their token, and its typed `ack` or `error` is sent back.
-  Until the runner (#19) implements it, `DisabledCrewController` answers `crew_disabled`.
+  With `--crew` that is a `RunnerCrewController` over the crew runner (see
+  [Crew controller](#crew-controller)), unless `startServer` is given a `crewController`.
 
 ### Crew messages (V1, ADR-016)
 
@@ -359,8 +360,8 @@ edits tests and fixtures only; no station pushes. No station gets `Agent`.
 
 `packages/server/src/crew/runner.ts` (`CrewRunner`) runs the head chef (#19). Started only
 with `--crew`: `startServer` then opens the database and a runner, and `close()` awaits
-`stopAll()`. Nothing starts runs yet: the command channel (#20) still uses
-`DisabledCrewController`; a controller backed by the runner comes in step 2 of #19.
+`stopAll()`. The command channel starts and stops runs through the
+[crew controller](#crew-controller).
 
 - **API.** `startRun({ trigger, taskId, prompt, resumeSessionId? })` resolves `{ ok, runId }`
   or a refusal: `busy` (already 3 chef processes, ADR-015, or this task already has one),
@@ -376,7 +377,12 @@ with `--crew`: `startServer` then opens the database and a runner, and `close()`
 --settings {"worktree":{"baseRef":"head"}}`, plus `--model` when `brigade_config` has one,
   `--resume <id>` when given and `--max-budget-usd <daily_cap_usd minus today's usage>`
   (whole cents, rounded down, at least 0.01) when the daily cap is on; with a cap of 0 the
-  flag is omitted. Never `--bare`, never a permission-bypass flag. The prompt goes on stdin, so it is
+  flag is omitted, then `--append-system-prompt <buildChefSystemPrompt()>`: the head chef's
+  instructions (`crew/chef-prompt.ts`): dispatch only to the `--agents` stations and never
+  write code except merges, the station and global caps from `brigade_config`, merge the
+  station branches into the task branch and retry a conflict once before listing it in
+  `unmerged`, never push to the protected branch, and end with exactly one schema 1 report
+  block with this run's task id. It is the server's own text; the user's goes on stdin. Never `--bare`, never a permission-bypass flag. The prompt goes on stdin, so it is
   neither parsed as a flag nor visible in the process list. stderr is dropped.
 - **Environment.** `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` = `brigade_config.global_cap`,
   `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1`, and the push guard: `GIT_CONFIG_COUNT=1`,
@@ -411,6 +417,26 @@ with `--crew`: `startServer` then opens the database and a runner, and `close()`
   and a synchronous `exit` handler kills the groups if the server dies without it. On Windows
   only the chef process itself is signalled.
 - **Ownership.** The chef's session id and each subagent `agentId` go to `owned_sessions`.
+
+### Crew controller
+
+`RunnerCrewController` (`crew/controller.ts`) turns authorized commands into runner calls
+(#20, ADR-016 point 6). Every command is for the head chef.
+
+- **`talk`.** A new task id (`t_` + 26 Crockford base32 characters, ULID-style: time first,
+  then random). The text goes to the chef on stdin unchanged. It resumes the chef session of
+  the latest `talk` run that has one (`Repository.latestRunWithSession('talk')`). One `talk`
+  at a time: while a `talk` run is active, or another `talk` is still starting, it answers
+  `busy` ("the head chef is still answering") and starts nothing, so two processes never
+  write the chef conversation. Active `assign` runs do not block it. Acks `runId`.
+- **`assign`.** A new task id and a new session. The stdin prompt names the ticket
+  (`owner/name#number`) and tells the chef to read it with `gh issue view`; the server does not
+  fetch the issue. Acks `runId` and `cardId` = the task id (one card per task, #31).
+- **`stop`.** Stops the most recently started active run (including one still setting up its
+  worktree) and acks once its process is gone, with its `runId`, or `null` when nothing runs.
+- **`approve`, `send-back`.** `unknown_card` until report cards are stored (#31).
+- **Refusals.** The runner's `busy` and `usage_cap_reached` keep their code; `no_repo`,
+  `invalid` and `setup_failed` become `invalid_command`. The message is the runner's.
 
 ### Brigade config (`orderup crew`)
 

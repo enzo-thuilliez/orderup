@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import type { ChefRunTrigger, CrewRunStatus } from 'orderup-shared';
 import { localDay, type Repository, type UsageTokens } from '../persistence/index.js';
+import { buildChefSystemPrompt } from './chef-prompt.js';
 import { agentsJson } from './stations.js';
 import { parseStreamLine, type StreamEvent } from './stream.js';
 import {
@@ -155,6 +156,8 @@ export function buildChefArgs(options: {
    * flag is then omitted.
    */
   maxBudgetUsd?: number | null;
+  /** The head chef's instructions (`buildChefSystemPrompt`), as `--append-system-prompt`. */
+  appendSystemPrompt?: string;
 }): string[] {
   const args = [
     '-p',
@@ -175,6 +178,7 @@ export function buildChefArgs(options: {
   if (options.maxBudgetUsd != null) {
     args.push('--max-budget-usd', budgetArg(options.maxBudgetUsd));
   }
+  if (options.appendSystemPrompt) args.push('--append-system-prompt', options.appendSystemPrompt);
   return args;
 }
 
@@ -315,6 +319,11 @@ export class CrewRunner {
       model: config.chefModel,
       resumeSessionId: options.resumeSessionId,
       maxBudgetUsd: config.dailyCapUsd > 0 ? config.dailyCapUsd - spent : null,
+      appendSystemPrompt: buildChefSystemPrompt({
+        taskId: options.taskId,
+        stationCap: config.stationCap,
+        globalCap: config.globalCap,
+      }),
     });
     const env = buildChefEnv({
       base: this.options.env ?? process.env,

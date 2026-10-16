@@ -1,12 +1,12 @@
-import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   agentsJson,
   buildChefArgs,
+  buildChefSystemPrompt,
   chefWorktreePath,
   CrewRunner,
   ensureChefWorktree,
@@ -23,58 +23,18 @@ import {
   type Database,
   type RunnerEvent,
 } from '../src/index.js';
-import { waitFor } from './helpers.js';
+import {
+  alive,
+  FAKE_CLAUDE,
+  git,
+  GIT_ENV,
+  tempRepo,
+  tmp,
+  waitFor,
+  type FakeLog,
+} from './helpers.js';
 
-const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.js', import.meta.url));
 const posix = process.platform !== 'win32';
-
-const GIT_ENV = {
-  ...process.env,
-  GIT_AUTHOR_NAME: 'Test',
-  GIT_AUTHOR_EMAIL: 'test@example.com',
-  GIT_COMMITTER_NAME: 'Test',
-  GIT_COMMITTER_EMAIL: 'test@example.com',
-};
-
-function git(cwd: string, args: string[], env: NodeJS.ProcessEnv = GIT_ENV): string {
-  return execFileSync('git', args, { cwd, env, encoding: 'utf8' }).trim();
-}
-
-function tmp(prefix: string): string {
-  return mkdtempSync(path.join(os.tmpdir(), prefix));
-}
-
-/** A repo with one commit on `main`, pushed to a bare `origin` whose HEAD is `main`. */
-function tempRepo(): { repo: string; origin: string } {
-  const origin = path.join(tmp('orderup-origin-'), 'origin.git');
-  git(os.tmpdir(), ['init', '--bare', '-b', 'main', origin]);
-  const repo = path.join(tmp('orderup-repo-'), 'kitchen');
-  mkdirSync(repo);
-  git(repo, ['init', '-b', 'main']);
-  git(repo, ['commit', '--allow-empty', '-m', 'init']);
-  git(repo, ['remote', 'add', 'origin', origin]);
-  git(repo, ['push', '-q', 'origin', 'main']);
-  git(repo, ['remote', 'set-head', 'origin', 'main']);
-  return { repo, origin };
-}
-
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-interface FakeLog {
-  args: string[];
-  cwd: string;
-  env: Record<string, string | null>;
-  pid: number;
-  prompt: string;
-  grandchild: number | null;
-}
 
 const dbs: Database[] = [];
 const runners: CrewRunner[] = [];
@@ -247,6 +207,31 @@ describe('buildChefArgs', () => {
   });
 });
 
+describe('buildChefSystemPrompt', () => {
+  it('states the task id, both caps and the report schema', () => {
+    const prompt = buildChefSystemPrompt({ taskId: 't_01JABC', stationCap: 3, globalCap: 7 });
+    expect(prompt).toContain('t_01JABC');
+    expect(prompt).toContain('"taskId": "t_01JABC"');
+    expect(prompt).toContain('At most 3 cooks at the same station');
+    expect(prompt).toContain('At most 7 cooks in total');
+    expect(prompt).toContain('"schema": 1');
+    for (const field of ['ticket', 'stations', 'summary', 'prUrl', 'filesChanged', 'unmerged']) {
+      expect(prompt).toContain(`"${field}":`);
+    }
+    for (const name of ['orderup-hot', 'orderup-garde-manger', 'orderup-commis']) {
+      expect(prompt).toContain(name);
+    }
+    expect(prompt).toMatch(/Never push to the protected branch/);
+    expect(prompt).toMatch(/retry|once/);
+  });
+
+  it('is passed as --append-system-prompt, after the other flags', () => {
+    const args = buildChefArgs({ appendSystemPrompt: 'be the chef' });
+    expect(args.slice(-2)).toEqual(['--append-system-prompt', 'be the chef']);
+    expect(buildChefArgs({})).not.toContain('--append-system-prompt');
+  });
+});
+
 describe('chef worktree and push guard', () => {
   it('creates the worktree under ~/.orderup on orderup/<taskId>, outside the checkout', async () => {
     const { repo } = tempRepo();
@@ -343,7 +328,15 @@ describe('CrewRunner', () => {
 
     const [log] = logs();
     expect(log!.args).toEqual(
-      buildChefArgs({ model: 'sonnet', maxBudgetUsd: repository.getBrigadeConfig().dailyCapUsd }),
+      buildChefArgs({
+        model: 'sonnet',
+        maxBudgetUsd: repository.getBrigadeConfig().dailyCapUsd,
+        appendSystemPrompt: buildChefSystemPrompt({
+          taskId: 'task-1',
+          stationCap: 4,
+          globalCap: 6,
+        }),
+      }),
     );
     expect(log!.args).not.toContain('scenario:ok -- not a flag');
     expect(log!.prompt).toBe('scenario:ok -- not a flag');
