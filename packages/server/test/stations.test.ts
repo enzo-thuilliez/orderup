@@ -6,6 +6,7 @@ import {
   agentsJson,
   agentsObject,
   renderAgentFile,
+  STATION_ALLOW_RULES,
   STATION_DEFINITIONS,
   stationOfAgent,
   stationsHash,
@@ -31,6 +32,18 @@ describe('station definitions (ADR-016 point 2)', () => {
       expect(byId[id]!.isolation).toBe('worktree');
     }
     for (const def of STATION_DEFINITIONS) expect(def.tools).not.toContain('Agent');
+  });
+
+  it('let writing stations edit without a prompt, and allow git and tests but never a push', () => {
+    for (const def of STATION_DEFINITIONS) {
+      expect(def.permissionMode).toBe(def.isolation ? 'acceptEdits' : undefined);
+    }
+    for (const rule of ['git add', 'git commit', 'git status', 'git diff', 'npm test']) {
+      expect(STATION_ALLOW_RULES).toContain(`Bash(${rule}:*)`);
+    }
+    expect(STATION_ALLOW_RULES.some((rule) => /push|Bash\(\*|^Bash$|git:\*/.test(rule))).toBe(
+      false,
+    );
   });
 
   it('tell writing stations to commit and name their branch, and pastry to edit tests only', () => {
@@ -60,8 +73,10 @@ describe('agentsJson', () => {
       prompt: STATION_DEFINITIONS[0]!.prompt,
       tools: WRITING,
       isolation: 'worktree',
+      permissionMode: 'acceptEdits',
     });
     expect(parsed['orderup-commis']).not.toHaveProperty('isolation');
+    expect(parsed['orderup-commis']).not.toHaveProperty('permissionMode');
     expect(parsed).toEqual(agentsObject());
   });
 });
@@ -86,10 +101,10 @@ describe('renderAgentFile', () => {
     expect(text).toContain('\nname: orderup-hot\n');
     expect(text).toContain(`\ndescription: ${JSON.stringify(hot.description)}\n`);
     expect(text).toContain('\ntools: Read, Grep, Glob, Edit, Write, Bash\n');
-    expect(text).toContain('\nisolation: worktree\n---\n\n');
+    expect(text).toContain('\nisolation: worktree\npermissionMode: acceptEdits\n---\n\n');
     expect(text.endsWith(`${hot.prompt.trimEnd()}\n`)).toBe(true);
     expect(agentFileHash(text)).toBe('a'.repeat(64));
-    expect(renderAgentFile(STATION_DEFINITIONS[2]!)).not.toContain('isolation');
+    expect(renderAgentFile(STATION_DEFINITIONS[2]!)).not.toMatch(/isolation|permissionMode/);
     expect(agentFileHash('no hash here')).toBeNull();
   });
 });

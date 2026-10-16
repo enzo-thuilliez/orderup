@@ -486,6 +486,16 @@ ones, supersede them instead.
       live under `.claude/worktrees/`, which the runner adds to `.git/info/exclude` (local,
       never committed).
     - Isolation is about files, not headcount: the caps of point 4 still apply.
+    - Permissions (amended 2026-10-16, #19, probe cases c and h). A station runs in the
+      background and cannot answer a permission prompt, so anything not allowed up front is
+      denied. Writing stations set `permissionMode: acceptEdits` in `--agents`. The chef's
+      `--settings` adds `permissions.allow` for `git add`, `git commit`, `git status`,
+      `git diff` and the pastry station's test and lint commands (`npm test`,
+      `npm run test|lint|typecheck`, `npx vitest|tsc|eslint`). Permission rules are per
+      process, so the chef has them too. `git push` is denied to stations because no rule
+      allows it: `disallowedTools: ["Bash(git push:*)"]` cannot be used, since it removes
+      the whole `Bash` tool from the station. A user settings rule that allows `git push`
+      would also apply to stations; the push guard still refuses the default branch.
 - **Alternatives considered:**
   - **Option B: one `claude -p` process per station, dispatched by the server.** Gives
     OrderUp hard per-station concurrency and budget, and lets cooks talk to each other. It
@@ -608,3 +618,23 @@ ones, supersede them instead.
     - g. Flags: 2.1.301. `-p --output-format stream-json` without `--verbose` exits 1 with no
       stdout; the CLI says stream-json requires `--verbose` in print mode. Runner change:
       none, keep `--verbose`.
+    - h. Station permissions: 2.1.301, 2026-10-16, `--model haiku`, the arguments of
+      `buildChefArgs` on the #19 fix branch. `permissionMode: "acceptEdits"` in `--agents` is
+      accepted (`init.agents` lists the five stations) and applies: a background `orderup-hot`
+      wrote its file with no prompt and no `system/permission_denied` line, while the chef's
+      `init.permissionMode` stayed `default`. With `--settings` `permissions.allow` for
+      `git add` / `git commit` / `git status` the station committed: one commit above the
+      task head on `worktree-agent-<agentId>`, a `system/vcs_state_changed` line with
+      `kind: "commit"`, `branch` and `cwd`, and no branch pushed to the bare remote. With
+      `disallowedTools: ["Bash(git push:*)"]` added, the station's `Bash` call failed with
+      "No such tool available: Bash" and it could not commit: a `Bash(...)` rule there
+      removes the tool, so it is not used. `system/task_started` has `task_id` (the
+      `agentId`), `tool_use_id`, `subagent_type`, `description`, `is_backgrounded` and
+      `prompt`; `system/task_notification` has `task_id`, `tool_use_id`, `status`
+      (`completed`) and the station's final text in `summary`, and comes before the second
+      `result`. A foreground dispatch (the chef asked to wait) returned
+      `tool_use_result.status: "completed"` with `worktreeBranch` and `worktreePath`. A
+      user-level `PreToolUse` hook again blocked the station's first `Bash` call. Runner
+      change: the permission policy above; read `task_*` lines for ids, names and status only
+      (never `prompt` or `summary`); end a station at `task_notification` or a `completed`
+      `Agent` result.
