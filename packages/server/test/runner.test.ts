@@ -4,9 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  agentIdOfWorktree,
   agentsJson,
   buildChefArgs,
   buildChefSystemPrompt,
+  chefSettingsJson,
   chefWorktreePath,
   CrewRunner,
   ensureChefWorktree,
@@ -135,6 +137,7 @@ describe('parseStreamLine', () => {
         parentToolUseId: null,
         subagentType: 'orderup-pastry',
         description: 'Tests',
+        target: 'Tests',
       },
     ]);
     expect(JSON.stringify(agent)).not.toContain('"P"');
@@ -156,9 +159,147 @@ describe('parseStreamLine', () => {
       subtype: 'success',
       isError: false,
       text: 'done',
+      terminalReason: null,
       totalCostUsd: 0.5,
+      processTokens: null,
       tokens: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
     });
+  });
+
+  it('sums modelUsage over models, and reads the terminal reason', () => {
+    const [result] = parseStreamLine(
+      JSON.stringify({
+        type: 'result',
+        subtype: 'error_max_budget_usd',
+        is_error: true,
+        terminal_reason: 'budget_exhausted',
+        total_cost_usd: 0.0114,
+        usage: { input_tokens: 1, output_tokens: 1 },
+        modelUsage: {
+          'claude-haiku-5-5': {
+            inputTokens: 10,
+            outputTokens: 579,
+            cacheReadInputTokens: 92596,
+            cacheCreationInputTokens: 34166,
+          },
+          'claude-opus-5-5': {
+            inputTokens: 2,
+            outputTokens: 'x',
+            cacheReadInputTokens: 3880,
+            cacheCreationInputTokens: 7549,
+          },
+        },
+      }),
+    );
+    expect(result).toMatchObject({
+      subtype: 'error_max_budget_usd',
+      terminalReason: 'budget_exhausted',
+      processTokens: { input: 12, output: 579, cacheRead: 96476, cacheWrite: 41715 },
+      tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+    });
+  });
+
+  it('reads the system lines of stations, never their prompt or summary', () => {
+    const lines = [
+      {
+        type: 'system',
+        subtype: 'task_started',
+        task_id: 'a7b6',
+        tool_use_id: 'toolu_1',
+        subagent_type: 'orderup-hot',
+        description: 'Add probe file',
+        prompt: 'SECRET PROMPT',
+      },
+      {
+        type: 'system',
+        subtype: 'task_notification',
+        task_id: 'a7b6',
+        tool_use_id: 'toolu_1',
+        status: 'completed',
+        summary: 'SECRET SUMMARY',
+        output_file: '/tmp/x.output',
+      },
+      {
+        type: 'system',
+        subtype: 'permission_denied',
+        tool_name: 'Bash',
+        parent_tool_use_id: 'toolu_1',
+        decision_reason_type: 'asyncAgent',
+      },
+      {
+        type: 'system',
+        subtype: 'vcs_state_changed',
+        kind: 'commit',
+        branch: 'worktree-agent-a7b6',
+        cwd: '/r/.claude/worktrees/agent-a7b6',
+      },
+      { type: 'system', subtype: 'task_started', prompt: 'no task id' },
+      { type: 'system', subtype: 'hook_started', hook_name: 'x' },
+    ];
+    const events = lines.flatMap((line) => parseStreamLine(JSON.stringify(line)));
+    expect(events).toEqual([
+      { kind: 'task_started', agentId: 'a7b6', toolUseId: 'toolu_1', subagentType: 'orderup-hot' },
+      { kind: 'task_ended', agentId: 'a7b6', toolUseId: 'toolu_1', status: 'completed' },
+      {
+        kind: 'permission_denied',
+        toolName: 'Bash',
+        toolUseId: null,
+        parentToolUseId: 'toolu_1',
+        reason: 'asyncAgent',
+      },
+      {
+        kind: 'vcs',
+        change: 'commit',
+        branch: 'worktree-agent-a7b6',
+        cwd: '/r/.claude/worktrees/agent-a7b6',
+      },
+    ]);
+    expect(JSON.stringify(events)).not.toMatch(/SECRET|output/);
+  });
+
+  it('reads the status and branch of an Agent result, and tool targets relative to cwd', () => {
+    expect(
+      parseStreamLine(
+        JSON.stringify({
+          type: 'user',
+          message: { content: [{ type: 'tool_result', tool_use_id: 't1' }] },
+          tool_use_result: {
+            agentId: 'a1',
+            status: 'completed',
+            worktreeBranch: 'worktree-agent-a1',
+            prompt: 'SECRET',
+          },
+        }),
+      ),
+    ).toEqual([
+      {
+        kind: 'tool_result',
+        toolUseId: 't1',
+        parentToolUseId: null,
+        agentId: 'a1',
+        status: 'completed',
+        worktreeBranch: 'worktree-agent-a1',
+      },
+    ]);
+    const [edit] = parseStreamLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'tool_use', id: 'e1', name: 'Edit', input: { file_path: '/w/src/a.ts' } },
+          ],
+        },
+      }),
+      '/w',
+    );
+    expect(edit).toMatchObject({ kind: 'tool_use', target: 'src/a.ts' });
+  });
+
+  it('finds the agentId of a station worktree from its cwd or branch', () => {
+    expect(agentIdOfWorktree('/r/.claude/worktrees/agent-a7b6', null)).toBe('a7b6');
+    expect(agentIdOfWorktree('/r/.claude/worktrees/agent-a7b6/src', 'other')).toBe('a7b6');
+    expect(agentIdOfWorktree(null, 'worktree-agent-a7b6')).toBe('a7b6');
+    expect(agentIdOfWorktree('/r', 'feature')).toBeNull();
   });
 });
 
@@ -175,7 +316,7 @@ describe('buildChefArgs', () => {
       '--agents',
       agentsJson(),
       '--settings',
-      '{"worktree":{"baseRef":"head"}}',
+      chefSettingsJson(),
       '--model',
       'opus',
       '--resume',
@@ -188,9 +329,10 @@ describe('buildChefArgs', () => {
       return a.includes('--max-budget-usd') ? a[a.indexOf('--max-budget-usd') + 1] : null;
     };
     expect(budget(3.749)).toBe('3.74');
-    expect(budget(0.001)).toBe('0.01');
-    expect(budget(0)).toBe('0.01');
-    expect(budget(-2)).toBe('0.01');
+    expect(budget(0.001)).toBe(MIN_BUDGET_USD.toFixed(2));
+    expect(budget(0)).toBe('0.10');
+    expect(MIN_BUDGET_USD).toBe(0.1);
+    expect(budget(-2)).toBe('0.10');
     expect(budget(null)).toBeNull();
     const plain = buildChefArgs({});
     expect(plain).not.toContain('--model');
@@ -204,6 +346,17 @@ describe('buildChefArgs', () => {
     ]) {
       expect(args).not.toContain(flag);
     }
+  });
+
+  it('merges station worktrees from head and allows git and tests, never a push', () => {
+    const settings = JSON.parse(chefSettingsJson()) as {
+      worktree: unknown;
+      permissions: { allow: string[]; deny?: unknown };
+    };
+    expect(settings.worktree).toEqual({ baseRef: 'head' });
+    expect(settings.permissions.allow).toContain('Bash(git commit:*)');
+    expect(settings.permissions.allow.join()).not.toMatch(/push|bypass/);
+    expect(settings.permissions).not.toHaveProperty('defaultMode');
   });
 });
 
@@ -223,6 +376,19 @@ describe('buildChefSystemPrompt', () => {
     }
     expect(prompt).toMatch(/Never push to the protected branch/);
     expect(prompt).toMatch(/retry|once/);
+    // No ticket: the example says so, with no placeholder ticket.
+    expect(prompt).toContain('"ticket": null');
+    expect(prompt).not.toContain('owner/name"');
+  });
+
+  it("shows the task's own ticket in the report example", () => {
+    const prompt = buildChefSystemPrompt({
+      taskId: 't_1',
+      stationCap: 1,
+      globalCap: 2,
+      ticket: { repo: 'acme/kitchen', number: 7 },
+    });
+    expect(prompt).toMatch(/"ticket": \{\s*"repo": "acme\/kitchen",\s*"number": 7\s*\}/);
   });
 
   it('is passed as --append-system-prompt, after the other flags', () => {
@@ -373,6 +539,7 @@ describe('CrewRunner', () => {
       parentToolUseId: null,
       subagentType: 'orderup-hot',
       description: 'Add the endpoint',
+      target: 'Add the endpoint',
     });
     expect(events).toContainEqual(
       expect.objectContaining({ type: 'run.tool', name: 'Edit', parentToolUseId: 'toolu_agent_1' }),
@@ -382,6 +549,7 @@ describe('CrewRunner', () => {
       runId,
       agentId: 'agent-abc',
       agentType: 'orderup-hot',
+      toolUseId: 'toolu_agent_1',
     });
     expect(JSON.stringify(events)).not.toContain('SECRET PROMPT TEXT');
     expect(end).toMatchObject({
@@ -502,20 +670,109 @@ describe('CrewRunner', () => {
     });
   });
 
-  it('passes the remaining daily budget as --max-budget-usd, never below the floor', async () => {
+  it('passes the remaining daily budget as --max-budget-usd, and refuses a start below the floor', async () => {
     const budgetArg = (log: FakeLog) => log.args[log.args.indexOf('--max-budget-usd') + 1];
-    const { runner, repository, ended, logs } = setup({ dailyCapUsd: 5 });
+    const { runner, repository, ended, logs, events } = setup({ dailyCapUsd: 5 });
     repository.startRun({ id: 'old', trigger: 'talk' });
     repository.addUsage({ runId: 'old', costUsd: 1.25 });
     const first = await started(runner, { trigger: 'talk', taskId: 't1', prompt: 'scenario:ok' });
     await ended(first);
     expect(budgetArg(logs()[0]!)).toBe('3.75');
 
-    // The ok run spent 0.25; then nearly all of the rest goes: the floor applies.
-    repository.addUsage({ runId: 'old', costUsd: 3.499 });
-    const second = await started(runner, { trigger: 'talk', taskId: 't2', prompt: 'scenario:ok' });
-    await ended(second);
-    expect(logs().map(budgetArg).sort()).toEqual([MIN_BUDGET_USD.toFixed(2), '3.75']);
+    // The ok run spent 0.25; now only 0.05 of the cap is left, under the floor.
+    repository.addUsage({ runId: 'old', costUsd: 3.45 });
+    // Under the cap, but with less than the floor left: refused, nothing spawned.
+    expect(await runner.startRun({ trigger: 'talk', taskId: 't3', prompt: '' })).toMatchObject({
+      ok: false,
+      code: 'usage_cap_reached',
+      message: expect.stringContaining('left'),
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'budget.exceeded', runId: null, capUsd: 5 }),
+    );
+    expect(logs()).toHaveLength(1);
+  });
+
+  it('ends a run the CLI stopped on --max-budget-usd as usage_cap_reached', async () => {
+    const { runner, ended, events, repository } = setup({ dailyCapUsd: 5 });
+    const runId = await started(runner, {
+      trigger: 'assign',
+      taskId: 't1',
+      prompt: 'scenario:budget',
+    });
+    const end = await ended(runId);
+    expect(end).toMatchObject({ status: 'usage_cap_reached', exitCode: 1 });
+    expect(events).toContainEqual({ type: 'budget.exceeded', runId, capUsd: 5, spentUsd: 0.12 });
+    expect(repository.getRun(runId)?.status).toBe('stopped');
+    expect(end.usage.costUsd).toBeCloseTo(0.12);
+  });
+
+  it('runs on past a first result: a background station and a second turn', async () => {
+    const { runner, ended, events, repository } = setup();
+    const runId = await started(runner, {
+      trigger: 'assign',
+      taskId: 't1',
+      prompt: 'scenario:background',
+    });
+    const end = await ended(runId);
+    expect(end).toMatchObject({ status: 'success', exitCode: 0 });
+    // Cumulative totals: the second result's, counted once.
+    expect(end.usage.costUsd).toBeCloseTo(0.3);
+    expect(end.usage.tokens).toEqual({ input: 10, output: 70, cacheRead: 300, cacheWrite: 400 });
+    expect(repository.usageForRun(runId).map((u) => u.tokens.output)).toEqual([50, 20]);
+    expect(events.filter((e) => e.type === 'run.usage').map((e) => e.costUsd)).toEqual([
+      expect.closeTo(0.1),
+      expect.closeTo(0.3),
+    ]);
+
+    expect(events.filter((e) => e.type === 'run.subagent')).toEqual([
+      {
+        type: 'run.subagent',
+        runId,
+        agentId: 'a7b6',
+        agentType: 'orderup-hot',
+        toolUseId: 'toolu_bg',
+      },
+    ]);
+    // async_launched is not the end of the station: its task_notification is.
+    expect(events.filter((e) => e.type === 'run.subagent.ended')).toEqual([
+      {
+        type: 'run.subagent.ended',
+        runId,
+        toolUseId: 'toolu_bg',
+        agentId: 'a7b6',
+        status: 'completed',
+      },
+    ]);
+    const endedAt = events.findIndex((e) => e.type === 'run.subagent.ended');
+    const secondUsage = events.findLastIndex((e) => e.type === 'run.usage');
+    expect(endedAt).toBeLessThan(secondUsage);
+    expect(events).toContainEqual({
+      type: 'run.permission-denied',
+      runId,
+      toolName: 'Bash',
+      toolUseId: 'toolu_b',
+      parentToolUseId: 'toolu_bg',
+      reason: 'asyncAgent',
+    });
+    expect(events).toContainEqual({
+      type: 'run.branch',
+      runId,
+      agentId: 'a7b6',
+      branch: 'worktree-agent-a7b6',
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'run.tool',
+        name: 'Write',
+        parentToolUseId: 'toolu_bg',
+        target: 'probe.txt',
+      }),
+    );
+    expect(JSON.stringify(events)).not.toContain('SECRET');
+    expect(repository.ownedSessions().filter((s) => s.kind === 'subagent')).toEqual([
+      expect.objectContaining({ id: 'a7b6', agentType: 'orderup-hot' }),
+    ]);
   });
 
   it('omits --max-budget-usd when the daily cap is 0', async () => {

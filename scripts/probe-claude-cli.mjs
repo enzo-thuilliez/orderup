@@ -7,7 +7,7 @@
 //
 // Usage: npm run build && node scripts/probe-claude-cli.mjs [case ...]
 // Cases: agents (a, b), worktree-branch (c), settings-merge (d), append-system-prompt (e),
-// budget (f), flags (g). No case runs them all. Every stream-json line goes to
+// budget (f), flags (g), station-policy (h). No case runs them all. Every stream-json line goes to
 // scripts/.probe-out/<run>.jsonl (gitignored); the summary goes to stdout and summary.json.
 //
 // It never runs inside this checkout or in HOME, and never writes ~/.claude/settings.json.
@@ -555,6 +555,85 @@ async function caseFlags() {
   };
 }
 
+/**
+ * h: the station permission policy of buildChefArgs as-is: `permissionMode: acceptEdits` and
+ * `disallowedTools` in --agents, `permissions.allow` in --settings. A writing station creates
+ * and commits a file, then tries to push to a local bare remote. Also records the shapes of
+ * the system lines the runner reads (permission_denied, vcs_state_changed, task_started,
+ * task_notification), without any `prompt` field.
+ */
+async function caseStationPolicy(name, transformAgents = (agents) => agents) {
+  const made = repo(name);
+  const remote = realpathSync(mkdtempSync(path.join(tmp, 'orderup-probe-remote-')));
+  repos.push(remote);
+  git(remote, 'init', '-q', '--bare');
+  git(made.dir, 'remote', 'add', 'origin', remote);
+  const args = chefArgs();
+  const agentsAt = args.indexOf('--agents') + 1;
+  args[agentsAt] = JSON.stringify(transformAgents(JSON.parse(args[agentsAt])));
+  const run = await runClaude(name, {
+    cwd: made.dir,
+    args,
+    prompt:
+      'Use the Agent tool exactly once with subagent_type "orderup-hot" and ask it: ' +
+      '"Create a file named probe.txt containing the single line: plated. Commit it with the ' +
+      'message chore: add probe file. Run git status. Then run git push origin HEAD and say ' +
+      'whether it worked." Do not edit files or run commands yourself. Wait for the station, ' +
+      'then reply with its report in one line.',
+  });
+  const systemOf = (subtype) =>
+    run.lines.filter((m) => m.type === 'system' && m.subtype === subtype).map(pick);
+  const branches = git(made.dir, 'for-each-ref', '--format=%(refname:short)', 'refs/heads')
+    .split('\n')
+    .filter((b) => b && b !== 'main' && b !== 'orderup/task-probe');
+  const stationTools = run.lines
+    .filter((m) => m.type === 'assistant' && m.parent_tool_use_id)
+    .flatMap((m) =>
+      blocks(m)
+        .filter((b) => b.type === 'tool_use')
+        .map((b) => ({
+          name: b.name,
+          // The command is the probe's own instruction, not user text.
+          command: typeof b.input?.command === 'string' ? b.input.command.slice(0, 80) : null,
+        })),
+    );
+  // Errors of the station's own tool calls (the probe repo's git output, no user text).
+  const stationToolErrors = run.lines
+    .filter((m) => m.type === 'user' && m.parent_tool_use_id)
+    .flatMap((m) => blocks(m).filter((b) => b.type === 'tool_result' && b.is_error === true))
+    .map((b) => toolResultText(b).slice(0, 160));
+  return {
+    exitCode: run.exitCode,
+    seconds: run.seconds,
+    stationDefinition: pick(JSON.parse(args[agentsAt])['orderup-hot']),
+    initAgents: initOf(run)?.agents?.filter((a) => a.startsWith('orderup-')),
+    initPermissionMode: initOf(run)?.permissionMode,
+    systemSubtypes: systemSubtypes(run),
+    permissionDenied: systemOf('permission_denied'),
+    vcsStateChanged: systemOf('vcs_state_changed'),
+    taskStarted: systemOf('task_started'),
+    taskNotification: systemOf('task_notification'),
+    stationTools,
+    stationToolErrors,
+    agentCalls: agentCalls(run).map(({ result: r, ...call }) => ({
+      ...call,
+      result: r && { ...r, text: undefined },
+    })),
+    stationBranches: branches.map((branch) => ({
+      branch,
+      commitsAboveTaskHead: Number(
+        git(made.dir, 'rev-list', '--count', `${made.taskHead}..${branch}`),
+      ),
+      hasProbeFile:
+        spawnSync('git', ['cat-file', '-e', `${branch}:probe.txt`], { cwd: made.dir }).status === 0,
+    })),
+    remoteBranches: git(remote, 'for-each-ref', '--format=%(refname:short)', 'refs/heads')
+      .split('\n')
+      .filter(Boolean),
+    results: run.lines.filter((m) => m.type === 'result').map(resultSummary),
+  };
+}
+
 // --- main ------------------------------------------------------------------------------------
 
 const CASES = {
@@ -577,6 +656,15 @@ const CASES = {
   'append-system-prompt': caseAppend,
   budget: caseBudget,
   flags: caseFlags,
+  'station-policy': async () => ({
+    asIs: await caseStationPolicy('station-policy'),
+    // The same without disallowedTools, to tell its effect from the allow rules'.
+    withoutDisallowed: await caseStationPolicy('station-policy-no-disallowed', (agents) =>
+      Object.fromEntries(
+        Object.entries(agents).map(([key, { disallowedTools: _d, ...def }]) => [key, def]),
+      ),
+    ),
+  }),
 };
 
 const wanted = process.argv.slice(2);

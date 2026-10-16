@@ -1,4 +1,4 @@
-import { REPORT_SCHEMA_VERSION } from 'orderup-shared';
+import { REPORT_SCHEMA_VERSION, type TicketRef } from 'orderup-shared';
 import { STATION_DEFINITIONS } from './stations.js';
 
 /**
@@ -9,8 +9,11 @@ export function buildChefSystemPrompt(options: {
   taskId: string;
   stationCap: number;
   globalCap: number;
+  /** The task's ticket (`assign`), or null: the report example shows it, never a placeholder. */
+  ticket?: TicketRef | null;
 }): string {
   const { taskId, stationCap, globalCap } = options;
+  const ticket = options.ticket ?? null;
   const stations = STATION_DEFINITIONS.map((def) => `- \`${def.name}\`: ${def.description}`);
   const writing = STATION_DEFINITIONS.filter((def) => def.isolation === 'worktree')
     .map((def) => `\`${def.name}\``)
@@ -20,7 +23,7 @@ export function buildChefSystemPrompt(options: {
     {
       schema: REPORT_SCHEMA_VERSION,
       taskId,
-      ticket: { repo: 'owner/name', number: 31 },
+      ticket: ticket && { repo: ticket.repo, number: ticket.number },
       stations: ['hot', 'pastry'],
       summary: 'One paragraph, plain text, at most 600 characters.',
       prUrl: 'https://github.com/owner/name/pull/42',
@@ -55,7 +58,7 @@ End every task with exactly one fenced \`\`\`json block, schema ${REPORT_SCHEMA_
 ${report}
 \`\`\`
 
-- "ticket" is null when there is no ticket. "prUrl" is null when there is no pull request.
+- "ticket" is ${ticket ? "this task's ticket, as in the example" : 'null: this task has no ticket'}. "prUrl" is null when there is no pull request.
 - "stations" lists the stations that worked on the task, by id (${stationIds}), never "head-chef".
 - "summary" is one paragraph of plain text, at most 600 characters.
 - "filesChanged" lists repo-relative paths.

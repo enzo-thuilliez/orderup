@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { SessionView } from 'orderup-shared';
 import { reduce, type SessionEvent } from './machine.js';
 
-export type EventSource = 'hook' | 'transcript';
+export type EventSource = 'hook' | 'transcript' | 'crew';
 
 export type StoreChange =
   { type: 'upsert'; session: SessionView } | { type: 'remove'; sessionId: string };
@@ -16,7 +16,10 @@ export interface StoreOptions {
   staleAfterMs?: number;
   /** Idle sessions walk out and are dropped after this long. Default: {@link LEAVE_AFTER_MS}. */
   leaveAfterMs?: number;
-  /** Sessions in a matching cwd are never shown. Default: anything under `os.tmpdir()`. */
+  /**
+   * Sessions in a matching cwd are never shown. Default: anything under `os.tmpdir()`. Crew
+   * sessions are always shown: the runner chose their cwd.
+   */
   ignoreCwd?: (cwd: string) => boolean;
   repoOf?: (cwd: string) => string | null;
   now?: () => number;
@@ -32,10 +35,20 @@ export const LEAVE_AFTER_MS = 10 * MINUTE;
  *
  * When a session has sent at least one hook event, hooks own its state: transcript events
  * for it only contribute token usage (ADR-001).
+ *
+ * A session the crew runner claims (`crew` source) is a crew cook: from then on only the
+ * runner's stream drives it, and hook and transcript events for it are dropped. The chef
+ * runs the user's own CLI, so their hooks fire for it too, and its stations' hook events
+ * carry the chef's session id. While its run is active (`crew.claim` to `crew.end`) no timer
+ * applies to it: a chef waiting on a quiet background station never goes stale or walks out.
  */
 export class SessionStore {
   readonly #sessions = new Map<string, SessionView>();
   readonly #hooked = new Set<string>();
+  /** Sessions claimed by the crew runner. */
+  readonly #crew = new Set<string>();
+  /** Crew sessions whose run is still active: no timers. */
+  readonly #crewRunning = new Set<string>();
   readonly #listeners = new Set<(change: StoreChange) => void>();
   /** During `applyAll`: each touched session as it was before the batch. */
   #batch: Map<string, SessionView | undefined> | null = null;
@@ -75,7 +88,13 @@ export class SessionStore {
   }
 
   #applyOne(event: SessionEvent, source: EventSource): void {
-    if (source === 'hook') {
+    if (source === 'crew') {
+      this.#crew.add(event.sessionId);
+      if (event.type === 'crew.claim') this.#crewRunning.add(event.sessionId);
+      else if (event.type === 'crew.end') this.#crewRunning.delete(event.sessionId);
+    } else if (this.#crew.has(event.sessionId)) {
+      return;
+    } else if (source === 'hook') {
       this.#hooked.add(event.sessionId);
     } else if (this.#hooked.has(event.sessionId) && event.type !== 'usage') {
       return;
@@ -106,7 +125,7 @@ export class SessionStore {
   #commit(event: SessionEvent): void {
     const prev = this.#sessions.get(event.sessionId);
     const cwd = prev?.cwd || event.cwd;
-    if (cwd && this.#ignoreCwd(cwd)) {
+    if (cwd && !this.#crew.has(event.sessionId) && this.#ignoreCwd(cwd)) {
       // Throwaway repo under the temp dir: never shown.
       this.#store(event.sessionId, prev, null);
       return;
@@ -124,6 +143,8 @@ export class SessionStore {
   #store(sessionId: string, prev: SessionView | undefined, next: SessionView | null): void {
     if (next === null) {
       this.#hooked.delete(sessionId);
+      this.#crew.delete(sessionId);
+      this.#crewRunning.delete(sessionId);
       this.#sessions.delete(sessionId);
     } else {
       this.#sessions.set(sessionId, next);
@@ -149,8 +170,12 @@ export class SessionStore {
     return s;
   }
 
-  /** The next timer for a session, or null when it never times out (`waiting`). */
+  /**
+   * The next timer for a session, or null when it never times out (`waiting`, or a crew
+   * session whose run is active).
+   */
   #timer(s: SessionView): { type: 'idle' | 'end'; at: number } | null {
+    if (this.#crewRunning.has(s.sessionId)) return null;
     switch (s.state) {
       case 'done':
         return { type: 'idle', at: s.updatedAt + this.#idleAfterMs };

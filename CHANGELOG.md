@@ -60,6 +60,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Stale and throwaway cooks leave the kitchen: an idle cook walks out after 10 minutes,
   sessions already stale when OrderUp starts never appear, and sessions under the temp dir
   are ignored.
+- Server: the crew runner, finished. The head chef and its stations show up in the kitchen
+  as crew cooks. Writing stations can edit and commit without a prompt they cannot answer
+  (never push), denied tool calls and station branches are reported, a chef run keeps going
+  past its first result while stations work in the background, tokens now include the
+  stations, a run the CLI stops on its budget counts as reaching the daily cap, a run no
+  longer starts with less than $0.10 of the cap left, and `assign` refuses a ticket repo that
+  is not `owner/name`.
 
 ## [0.1.0] - 2026-09-27
 

@@ -8,6 +8,7 @@ import type {
   TicketRef,
 } from 'orderup-shared';
 import type { Repository } from '../persistence/index.js';
+import { isValidRepo } from '../sources/tickets.js';
 import type { CrewRunner, StartRunOptions, StartRunRefusal } from './runner.js';
 
 /** A crew command as the controller sees it: validated, authorized, and without its token. */
@@ -151,11 +152,17 @@ export class RunnerCrewController implements CrewController {
   }
 
   async assign(request: CrewRequest<'assign'>): Promise<CrewResult<'assign'>> {
+    // The repo goes into the chef's prompt and its `gh --repo` argument: never one that
+    // could read as an option or carry anything but `owner/name`.
+    if (!isValidRepo(request.ticket.repo)) {
+      return crewError(request.requestId, 'assign', 'invalid_command', 'invalid ticket repo');
+    }
     const taskId = newTaskId(this.now());
     const started = await this.start(request, {
       trigger: 'assign',
       taskId,
       prompt: assignPrompt(request.ticket),
+      ticket: request.ticket,
     });
     if (!started.ok) return started.error;
     // One card per task (#31): the card id is the task id.

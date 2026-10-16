@@ -434,7 +434,7 @@ describe('crew commands through the runner', () => {
   /** The fake picks its scenario from the prompt, and an assign prompt names the ticket repo. */
   const slowAssign = (number: number) => ({
     type: 'assign',
-    ticket: { repo: 'o/scenario:slow', number },
+    ticket: { repo: 'o/scenario-slow', number },
   });
   const arg = (log: FakeLog, flag: string) =>
     log.args.includes(flag) ? log.args[log.args.indexOf(flag) + 1] : undefined;
@@ -491,7 +491,24 @@ describe('crew commands through the runner', () => {
     expect(log.prompt).toContain('`gh issue view 20 --repo o/r --json title,body,labels,comments`');
     expect(log.prompt).not.toContain('--comments');
     expect(arg(log, '--append-system-prompt')).toContain(path.basename(log.cwd));
+    // The report example shows this task's ticket, not a placeholder.
+    expect(arg(log, '--append-system-prompt')).toMatch(/"repo": "o\/r",\s*"number": 20/);
+    expect(arg(log, '--append-system-prompt')).not.toContain('"repo": "owner/name"');
     await k.idle();
+  });
+
+  it('assign refuses a ticket repo that is not owner/name, and starts nothing', async () => {
+    const k = await kitchen();
+    // parseCrewCommand lets these through: only the shape "a/b" is checked there.
+    for (const repo of ['-o/r', 'o/r;x', 'o/r`x`']) {
+      expect(await k.send({ type: 'assign', ticket: { repo, number: 1 } })).toMatchObject({
+        type: 'error',
+        command: 'assign',
+        code: 'invalid_command',
+        message: 'invalid ticket repo',
+      });
+    }
+    expect(k.runner.activeRunIds).toEqual([]);
   });
 
   it.skipIf(process.platform === 'win32')(

@@ -9,7 +9,8 @@ import { renameSync, writeFileSync } from 'node:fs';
 const chunks = [];
 for await (const chunk of process.stdin) chunks.push(chunk);
 const prompt = Buffer.concat(chunks).toString('utf8');
-const scenario = /scenario:([a-z-]+)/.exec(prompt)?.[1] ?? 'ok';
+// "scenario-<name>" too, so a valid ticket repo (o/scenario-slow) can pick one.
+const scenario = /scenario[:-]([a-z-]+)/.exec(prompt)?.[1] ?? 'ok';
 const session = process.argv.includes('--resume')
   ? process.argv[process.argv.indexOf('--resume') + 1]
   : `sess-${process.pid}`;
@@ -162,6 +163,120 @@ switch (scenario) {
     // A resumed session reports the conversation's whole total.
     out(result(1.75));
     process.exit(0);
+    break;
+  }
+  case 'background': {
+    // Probe case a and h (2.1.301): a background station. The Agent result comes back at
+    // once, the chef's turn ends with a first result, then the station's lines and a second
+    // turn in the same process. Costs and modelUsage are cumulative for the process.
+    const modelUsage = (output) => ({
+      'claude-haiku-5-5': {
+        inputTokens: 10,
+        outputTokens: output,
+        cacheReadInputTokens: 300,
+        cacheCreationInputTokens: 400,
+        costUSD: 0.3,
+      },
+    });
+    out({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu_bg',
+            name: 'Agent',
+            input: {
+              subagent_type: 'orderup-hot',
+              description: 'Add probe file',
+              prompt: 'SECRET DISPATCH',
+            },
+          },
+        ],
+      },
+    });
+    out({
+      type: 'system',
+      subtype: 'task_started',
+      task_id: 'a7b6',
+      tool_use_id: 'toolu_bg',
+      subagent_type: 'orderup-hot',
+      description: 'Add probe file',
+      prompt: 'SECRET TASK PROMPT',
+      is_backgrounded: true,
+    });
+    out({
+      type: 'user',
+      parent_tool_use_id: null,
+      message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_bg', content: 'launched' }] },
+      tool_use_result: { status: 'async_launched', agentId: 'a7b6', prompt: 'SECRET DISPATCH' },
+    });
+    out(
+      result(0.1, {
+        result: 'Dispatched.',
+        result_index: 0,
+        usage: usage(5, 5),
+        modelUsage: modelUsage(50),
+      }),
+    );
+    out({
+      type: 'assistant',
+      parent_tool_use_id: 'toolu_bg',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu_w',
+            name: 'Write',
+            input: { file_path: `${process.cwd()}/probe.txt` },
+          },
+        ],
+      },
+    });
+    out({
+      type: 'system',
+      subtype: 'permission_denied',
+      tool_name: 'Bash',
+      tool_use_id: 'toolu_b',
+      parent_tool_use_id: 'toolu_bg',
+      decision_reason_type: 'asyncAgent',
+    });
+    out({
+      type: 'system',
+      subtype: 'vcs_state_changed',
+      kind: 'commit',
+      branch: 'worktree-agent-a7b6',
+      cwd: `${process.cwd()}/.claude/worktrees/agent-a7b6`,
+    });
+    out({
+      type: 'system',
+      subtype: 'task_notification',
+      task_id: 'a7b6',
+      tool_use_id: 'toolu_bg',
+      status: 'completed',
+      summary: 'SECRET STATION SUMMARY',
+    });
+    out(init);
+    out(result(0.3, { result_index: 1, usage: usage(5, 5), modelUsage: modelUsage(70) }));
+    if (/hold/.test(prompt)) hang();
+    else process.exit(0);
+    break;
+  }
+  case 'budget': {
+    // Probe case f: the CLI stops on --max-budget-usd between turns, after a first result.
+    out(result(0.05));
+    out({
+      type: 'result',
+      subtype: 'error_max_budget_usd',
+      is_error: true,
+      session_id: session,
+      total_cost_usd: 0.12,
+      terminal_reason: 'budget_exhausted',
+      errors: ['Reached maximum budget ($0.10)'],
+      usage: usage(1, 1),
+    });
+    process.exit(1);
     break;
   }
   default:
