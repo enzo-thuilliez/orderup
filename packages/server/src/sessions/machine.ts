@@ -1,4 +1,12 @@
-import type { SessionView, TokenUsage } from 'orderup-shared';
+import type {
+  CookState,
+  CrewCookState,
+  CrewRunStatus,
+  SessionView,
+  SubagentView,
+  TokenUsage,
+} from 'orderup-shared';
+import { stationOfAgent } from '../crew/stations.js';
 
 /**
  * Normalized input to the reducer. Produced by hook intake, the transcript tail and the
@@ -32,6 +40,15 @@ export type SessionEvent = {
   | { type: 'usage'; tokens: TokenUsage }
   | { type: 'idle' }
   | { type: 'end' }
+  // Crew only (#19): fed by the crew runner's stream, never by hooks or transcripts.
+  /** The session is the head chef's: it becomes a crew cook. */
+  | { type: 'crew.claim' }
+  /** A tool call inside a station subagent (`parent_tool_use_id`). */
+  | { type: 'subagent.tool'; subagentId: string; tool: string; target: string | null }
+  /** A station finished; it stays at its station, done or in error, until the run ends. */
+  | { type: 'subagent.end'; subagentId: string; ok: boolean }
+  /** The chef's run ended with this status. */
+  | { type: 'crew.end'; status: CrewRunStatus }
 );
 
 export const EMPTY_TOKENS: TokenUsage = Object.freeze({
@@ -62,6 +79,42 @@ export function createSession(event: SessionEvent): SessionView {
  * No timers, no I/O: the store decides when `idle` happens.
  */
 export function reduce(prev: SessionView | undefined, event: SessionEvent): SessionView | null {
+  const next = reduceState(prev, event);
+  return next && next.kind === 'crew' ? withCrewState(next, event) : next;
+}
+
+/** Brigade state of a crew cook, from its cook state. */
+const CREW_STATE: Record<CookState, CrewCookState> = {
+  working: 'working',
+  waiting: 'needs-you',
+  done: 'done',
+  idle: 'idle',
+};
+
+function crewSubagent(a: SubagentView): SubagentView {
+  return {
+    ...a,
+    station: a.station ?? stationOfAgent(a.type ?? ''),
+    crewState: a.crewState ?? CREW_STATE[a.state],
+  };
+}
+
+/** Crew fields of a crew session: `head-chef`, its brigade state, its stations. */
+function withCrewState(s: SessionView, event: SessionEvent): SessionView {
+  const failed =
+    event.type === 'crew.end' && event.status !== 'success' && event.status !== 'stopped';
+  return {
+    ...s,
+    agent: null,
+    station: 'head-chef',
+    // A run that failed shows its error until the next one starts.
+    crewState:
+      failed || (s.crewState === 'error' && s.state === 'done') ? 'error' : CREW_STATE[s.state],
+    subagents: s.subagents.map(crewSubagent),
+  };
+}
+
+function reduceState(prev: SessionView | undefined, event: SessionEvent): SessionView | null {
   if (event.type === 'end') return null;
 
   const base = prev ?? createSession(event);
@@ -113,5 +166,31 @@ export function reduce(prev: SessionView | undefined, event: SessionEvent): Sess
       return { ...s, tokens: event.tokens };
     case 'idle':
       return { ...s, state: 'idle', activity: null, subagents: [] };
+    case 'crew.claim':
+      return { ...s, kind: 'crew' };
+    case 'subagent.tool': {
+      const activity = { tool: event.tool, target: event.target, since: event.at };
+      const subagents = s.subagents.map((a) =>
+        a.subagentId === event.subagentId
+          ? { ...a, state: 'working' as const, crewState: 'working' as const, activity }
+          : a,
+      );
+      return { ...s, subagents };
+    }
+    case 'subagent.end': {
+      const subagents = s.subagents.map((a) =>
+        a.subagentId === event.subagentId
+          ? {
+              ...a,
+              state: 'done' as const,
+              crewState: event.ok ? ('done' as const) : ('error' as const),
+              activity: null,
+            }
+          : a,
+      );
+      return { ...s, subagents };
+    }
+    case 'crew.end':
+      return { ...s, state: 'done', activity: null, subagents: [] };
   }
 }

@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { SessionView } from 'orderup-shared';
 import { reduce, type SessionEvent } from './machine.js';
 
-export type EventSource = 'hook' | 'transcript';
+export type EventSource = 'hook' | 'transcript' | 'crew';
 
 export type StoreChange =
   { type: 'upsert'; session: SessionView } | { type: 'remove'; sessionId: string };
@@ -26,10 +26,16 @@ const MINUTE = 60_000;
  *
  * When a session has sent at least one hook event, hooks own its state: transcript events
  * for it only contribute token usage (ADR-001).
+ *
+ * A session the crew runner claims (`crew` source) is a crew cook: from then on only the
+ * runner's stream drives it, and hook and transcript events for it are dropped. The chef
+ * runs the user's own CLI, so their hooks fire for it too, and its stations' hook events
+ * carry the chef's session id.
  */
 export class SessionStore {
   readonly #sessions = new Map<string, SessionView>();
   readonly #hooked = new Set<string>();
+  readonly #crew = new Set<string>();
   readonly #listeners = new Set<(change: StoreChange) => void>();
   readonly #repoCache = new Map<string, string | null>();
   readonly #idleAfterMs: number;
@@ -47,7 +53,11 @@ export class SessionStore {
   }
 
   apply(event: SessionEvent, source: EventSource): void {
-    if (source === 'hook') {
+    if (source === 'crew') {
+      this.#crew.add(event.sessionId);
+    } else if (this.#crew.has(event.sessionId)) {
+      return;
+    } else if (source === 'hook') {
       this.#hooked.add(event.sessionId);
     } else if (this.#hooked.has(event.sessionId) && event.type !== 'usage') {
       return;
@@ -92,6 +102,7 @@ export class SessionStore {
 
     if (next === null) {
       this.#hooked.delete(event.sessionId);
+      this.#crew.delete(event.sessionId);
       if (prev && this.#sessions.delete(event.sessionId)) {
         this.#emit({ type: 'remove', sessionId: event.sessionId });
       }

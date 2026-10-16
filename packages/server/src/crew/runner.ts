@@ -1,10 +1,11 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import { createInterface } from 'node:readline';
-import type { ChefRunTrigger, CrewRunStatus } from 'orderup-shared';
+import type { ChefRunTrigger, CrewRunStatus, TicketRef } from 'orderup-shared';
 import { localDay, type Repository, type UsageTokens } from '../persistence/index.js';
 import { buildChefSystemPrompt } from './chef-prompt.js';
-import { agentsJson } from './stations.js';
+import { agentsJson, STATION_ALLOW_RULES } from './stations.js';
 import { parseStreamLine, type StreamEvent } from './stream.js';
 import {
   defaultOrderupDir,
@@ -47,12 +48,14 @@ export interface StartRunOptions {
   prompt: string;
   /** The chef session to continue (`--resume`), for a `send-back` or a follow-up `talk`. */
   resumeSessionId?: string;
+  /** The task's ticket (`assign`), shown in the chef's report example. */
+  ticket?: TicketRef | null;
 }
 
 export type StartRunRefusal =
   /** Already `MAX_CONCURRENT_RUNS` chef processes, or this task already has a running chef. */
   | 'busy'
-  /** Today's usage reached the daily cap. */
+  /** Less than `MIN_BUDGET_USD` of today's cap is left. */
   | 'usage_cap_reached'
   /** No working repo configured (`orderup crew set --repo`). */
   | 'no_repo'
@@ -66,7 +69,16 @@ export type StartRunResult =
 
 /** What a run reports. No event carries prompt text (ADR-016 point 7). */
 export type RunnerEvent =
-  | { type: 'run.started'; runId: string; trigger: ChefRunTrigger; taskId: string }
+  | {
+      type: 'run.started';
+      runId: string;
+      trigger: ChefRunTrigger;
+      taskId: string;
+      /** The chef's worktree, its working directory. */
+      cwd: string;
+      /** Name of the working repo (its directory's basename). */
+      repo: string;
+    }
   | { type: 'run.session'; runId: string; sessionId: string }
   /** Assistant text of the chef's own conversation (not its stations'). */
   | { type: 'run.text'; runId: string; text: string }
@@ -81,8 +93,43 @@ export type RunnerEvent =
       subagentType?: string;
       /** `Agent` calls: the short dispatch description. */
       description?: string;
+      /** File path or command, as hooks show it. */
+      target: string | null;
     }
-  | { type: 'run.subagent'; runId: string; agentId: string; agentType: string | null }
+  /** A station's `agentId` became known (from its `Agent` result or `system/task_started`). */
+  | {
+      type: 'run.subagent';
+      runId: string;
+      agentId: string;
+      agentType: string | null;
+      /** The `Agent` call that started it, when known. */
+      toolUseId: string | null;
+    }
+  /** A station finished: `completed`, or the CLI's error status. */
+  | {
+      type: 'run.subagent.ended';
+      runId: string;
+      toolUseId: string;
+      agentId: string | null;
+      status: string;
+    }
+  /** A tool call was denied without a prompt (a background station cannot ask). */
+  | {
+      type: 'run.permission-denied';
+      runId: string;
+      toolName: string | null;
+      toolUseId: string | null;
+      parentToolUseId: string | null;
+      reason: string | null;
+    }
+  /**
+   * A writing station's branch, for the merge (#31): from its `Agent` result, or from the
+   * commit it made (`system/vcs_state_changed`). Its worktree is
+   * `.claude/worktrees/agent-<agentId>` on `worktree-agent-<agentId>`.
+   */
+  | { type: 'run.branch'; runId: string; agentId: string | null; branch: string }
+  /** This run's usage so far, after each `result` line. */
+  | { type: 'run.usage'; runId: string; tokens: UsageTokens; costUsd: number }
   | {
       type: 'run.ended';
       runId: string;
@@ -120,8 +167,8 @@ interface ActiveRun {
   taskId: string;
   child: ChildProcess | null;
   sessionId: string | null;
-  /** Cost of the session recorded before this run (resumed runs report the whole total). */
-  priorSessionCostUsd: number;
+  /** Usage of the session recorded before this run (resumed runs report the whole total). */
+  priorSession: { costUsd: number; tokens: UsageTokens };
   costUsd: number;
   tokens: UsageTokens;
   lastResult: Extract<StreamEvent, { kind: 'result' }> | null;
@@ -129,6 +176,14 @@ interface ActiveRun {
   endReason: 'stopped' | 'usage_cap_reached' | null;
   /** Agent tool_use id → subagent name, to tie an `agentId` to its station. */
   agentCalls: Map<string, string | null>;
+  /** `agentId`s already reported with `run.subagent`. */
+  agents: Set<string>;
+  /** Agent tool_use ids already reported with `run.subagent.ended`. */
+  agentsEnded: Set<string>;
+  /** Branches already reported with `run.branch`. */
+  branches: Set<string>;
+  /** The chef's worktree, once set up. */
+  cwd: string | null;
   done: Promise<void>;
   killTimer?: NodeJS.Timeout;
   /** Set once stop() was asked before the process existed. */
@@ -137,13 +192,25 @@ interface ActiveRun {
 
 const ZERO_TOKENS: UsageTokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
-/** Smallest `--max-budget-usd` the runner passes: 0 or less would end a run before it starts. */
-export const MIN_BUDGET_USD = 0.01;
+/**
+ * Smallest budget a run starts with. A minimal haiku turn costs about $0.0064 and the CLI
+ * checks the budget between turns (probe case f), so with less left a run could do no real
+ * work: the start is refused as `usage_cap_reached` instead.
+ */
+export const MIN_BUDGET_USD = 0.1;
 
 /** The remaining budget in whole cents, rounded down so the CLI never gets more than is left. */
 function budgetArg(remainingUsd: number): string {
   const cents = Math.floor(remainingUsd * 100 + 1e-9) / 100;
   return Math.max(MIN_BUDGET_USD, cents).toFixed(2);
+}
+
+/** The chef's `--settings` layer. The CLI merges it with the user's settings (probe case d). */
+export function chefSettingsJson(): string {
+  return JSON.stringify({
+    worktree: { baseRef: 'head' },
+    permissions: { allow: [...STATION_ALLOW_RULES] },
+  });
 }
 
 /** The `claude` arguments for a chef run. The prompt is not among them: it goes on stdin. */
@@ -169,9 +236,10 @@ export function buildChefArgs(options: {
     String(MAX_TURNS),
     '--agents',
     agentsJson(),
-    // ADR-016 point 10: station worktrees branch from the chef's task branch.
+    // ADR-016 point 10: station worktrees branch from the chef's task branch, and stations
+    // may run git and the test and lint commands without a prompt they cannot answer.
     '--settings',
-    JSON.stringify({ worktree: { baseRef: 'head' } }),
+    chefSettingsJson(),
   ];
   if (options.model) args.push('--model', options.model);
   if (options.resumeSessionId) args.push('--resume', options.resumeSessionId);
@@ -252,14 +320,19 @@ export class CrewRunner {
       return refuse('invalid', 'invalid chef model');
     }
     const spent = this.spentToday();
-    if (config.dailyCapUsd > 0 && spent >= config.dailyCapUsd) {
+    if (config.dailyCapUsd > 0 && config.dailyCapUsd - spent < MIN_BUDGET_USD) {
       this.emit({
         type: 'budget.exceeded',
         runId: null,
         capUsd: config.dailyCapUsd,
         spentUsd: spent,
       });
-      return refuse('usage_cap_reached', 'daily usage cap reached');
+      return refuse(
+        'usage_cap_reached',
+        spent >= config.dailyCapUsd
+          ? 'daily usage cap reached'
+          : `less than $${MIN_BUDGET_USD.toFixed(2)} of the daily usage cap left`,
+      );
     }
 
     // Reserve the slot before any await, so concurrent starts cannot exceed the limit.
@@ -270,12 +343,16 @@ export class CrewRunner {
       taskId: options.taskId,
       child: null,
       sessionId: null,
-      priorSessionCostUsd: 0,
+      priorSession: { costUsd: 0, tokens: { ...ZERO_TOKENS } },
       costUsd: 0,
       tokens: { ...ZERO_TOKENS },
       lastResult: null,
       endReason: null,
       agentCalls: new Map(),
+      agents: new Set(),
+      agentsEnded: new Set(),
+      branches: new Set(),
+      cwd: null,
       done: new Promise<void>((resolve) => (settle = resolve)),
       cancelled: false,
     };
@@ -309,9 +386,7 @@ export class CrewRunner {
     });
     if (options.resumeSessionId) {
       run.sessionId = options.resumeSessionId;
-      run.priorSessionCostUsd = this.repository.usageTotalForSession(
-        options.resumeSessionId,
-      ).costUsd;
+      run.priorSession = this.repository.usageTotalForSession(options.resumeSessionId);
       this.repository.addOwnedSession({ kind: 'chef', id: options.resumeSessionId, runId });
     }
 
@@ -323,6 +398,7 @@ export class CrewRunner {
         taskId: options.taskId,
         stationCap: config.stationCap,
         globalCap: config.globalCap,
+        ticket: options.ticket ?? null,
       }),
     });
     const env = buildChefEnv({
@@ -341,7 +417,15 @@ export class CrewRunner {
       windowsHide: true,
     });
     run.child = child;
-    this.emit({ type: 'run.started', runId, trigger: options.trigger, taskId: options.taskId });
+    run.cwd = worktree.path;
+    this.emit({
+      type: 'run.started',
+      runId,
+      trigger: options.trigger,
+      taskId: options.taskId,
+      cwd: worktree.path,
+      repo: path.basename(repoPath),
+    });
 
     // stderr is drained and dropped: it is the CLI's, and may echo anything.
     child.stderr?.resume();
@@ -350,7 +434,7 @@ export class CrewRunner {
 
     const lines = createInterface({ input: child.stdout!, crlfDelay: Infinity });
     lines.on('line', (line) => {
-      for (const event of parseStreamLine(line)) this.onStreamEvent(run, event);
+      for (const event of parseStreamLine(line, run.cwd)) this.onStreamEvent(run, event);
     });
     const stdoutClosed = new Promise<void>((resolve) => lines.once('close', resolve));
 
@@ -430,24 +514,76 @@ export class CrewRunner {
           parentToolUseId: event.parentToolUseId,
           ...(event.subagentType !== undefined ? { subagentType: event.subagentType } : {}),
           ...(event.description !== undefined ? { description: event.description } : {}),
+          target: event.target,
         });
         return;
       case 'tool_result': {
         if (event.agentId === undefined || !run.agentCalls.has(event.toolUseId)) return;
-        const agentType = run.agentCalls.get(event.toolUseId) ?? null;
-        this.repository.addOwnedSession({
-          kind: 'subagent',
-          id: event.agentId,
-          runId: run.id,
-          agentType,
-        });
-        this.emit({ type: 'run.subagent', runId: run.id, agentId: event.agentId, agentType });
+        this.addSubagent(run, event.agentId, event.toolUseId);
+        if (event.worktreeBranch) this.addBranch(run, event.agentId, event.worktreeBranch);
+        // A foreground station is done when its result comes; a background one
+        // (`async_launched`) ends with `system/task_notification`.
+        if (event.status === 'completed') {
+          this.endSubagent(run, event.toolUseId, event.agentId, 'completed');
+        }
         return;
       }
+      case 'task_started':
+        if (event.toolUseId !== null && !run.agentCalls.has(event.toolUseId)) {
+          run.agentCalls.set(event.toolUseId, event.subagentType);
+        }
+        this.addSubagent(run, event.agentId, event.toolUseId);
+        return;
+      case 'task_ended':
+        if (event.toolUseId !== null) {
+          this.endSubagent(run, event.toolUseId, event.agentId, event.status);
+        }
+        return;
+      case 'permission_denied':
+        this.emit({
+          type: 'run.permission-denied',
+          runId: run.id,
+          toolName: event.toolName,
+          toolUseId: event.toolUseId,
+          parentToolUseId: event.parentToolUseId,
+          reason: event.reason,
+        });
+        return;
+      case 'vcs':
+        if (event.change === 'commit' && event.branch) {
+          this.addBranch(run, agentIdOfWorktree(event.cwd, event.branch), event.branch);
+        }
+        return;
       case 'result':
         this.onResult(run, event);
         return;
     }
+  }
+
+  /** Records a station's `agentId` once, whichever line reports it first. */
+  private addSubagent(run: ActiveRun, agentId: string, toolUseId: string | null): void {
+    if (run.agents.has(agentId)) return;
+    run.agents.add(agentId);
+    const agentType = toolUseId !== null ? (run.agentCalls.get(toolUseId) ?? null) : null;
+    this.repository.addOwnedSession({ kind: 'subagent', id: agentId, runId: run.id, agentType });
+    this.emit({ type: 'run.subagent', runId: run.id, agentId, agentType, toolUseId });
+  }
+
+  private endSubagent(
+    run: ActiveRun,
+    toolUseId: string,
+    agentId: string | null,
+    status: string,
+  ): void {
+    if (run.agentsEnded.has(toolUseId)) return;
+    run.agentsEnded.add(toolUseId);
+    this.emit({ type: 'run.subagent.ended', runId: run.id, toolUseId, agentId, status });
+  }
+
+  private addBranch(run: ActiveRun, agentId: string | null, branch: string): void {
+    if (run.branches.has(branch)) return;
+    run.branches.add(branch);
+    this.emit({ type: 'run.branch', runId: run.id, agentId, branch });
   }
 
   private setSession(run: ActiveRun, sessionId: string): void {
@@ -459,33 +595,51 @@ export class CrewRunner {
   }
 
   /**
-   * A `result` line: record this run's share of the cost, then enforce the daily cap. A
-   * resumed session reports its whole total, so what the session already recorded (earlier
-   * runs, earlier results of this run) is subtracted.
+   * A `result` line, which is not the end of the run: a background station starts a second
+   * turn in the same process (probe case a). Records this run's share of the usage, then
+   * enforces the daily cap. `total_cost_usd` and `modelUsage` are cumulative for the process
+   * and, for a resumed session, the conversation, so what the session already recorded
+   * (earlier runs, earlier results of this run) is subtracted. Without `modelUsage`, this
+   * turn's `usage` is added instead (chef only).
    */
   private onResult(run: ActiveRun, event: Extract<StreamEvent, { kind: 'result' }>): void {
     if (event.sessionId && event.sessionId !== run.sessionId) this.setSession(run, event.sessionId);
     run.lastResult = event;
     const recorded = run.sessionId
-      ? this.repository.usageTotalForSession(run.sessionId).costUsd
-      : run.costUsd;
-    const delta = Math.max(0, event.totalCostUsd - Math.max(recorded, run.priorSessionCostUsd));
-    const tokens = event.tokens;
-    this.repository.addUsage({ runId: run.id, tokens, costUsd: delta, recordedAt: this.now() });
-    run.costUsd += delta;
+      ? this.repository.usageTotalForSession(run.sessionId)
+      : { costUsd: run.costUsd, tokens: run.tokens };
+    const already = (pick: (u: { costUsd: number; tokens: UsageTokens }) => number) =>
+      Math.max(pick(recorded), pick(run.priorSession));
+    const costUsd = Math.max(0, event.totalCostUsd - already((u) => u.costUsd));
+    const total = event.processTokens;
+    const tokens: UsageTokens = total
+      ? {
+          input: Math.max(0, total.input - already((u) => u.tokens.input)),
+          output: Math.max(0, total.output - already((u) => u.tokens.output)),
+          cacheRead: Math.max(0, total.cacheRead - already((u) => u.tokens.cacheRead)),
+          cacheWrite: Math.max(0, total.cacheWrite - already((u) => u.tokens.cacheWrite)),
+        }
+      : event.tokens;
+    this.repository.addUsage({ runId: run.id, tokens, costUsd, recordedAt: this.now() });
+    run.costUsd += costUsd;
     run.tokens = {
       input: run.tokens.input + tokens.input,
       output: run.tokens.output + tokens.output,
       cacheRead: run.tokens.cacheRead + tokens.cacheRead,
       cacheWrite: run.tokens.cacheWrite + tokens.cacheWrite,
     };
+    this.emit({ type: 'run.usage', runId: run.id, tokens: run.tokens, costUsd: run.costUsd });
 
+    // `--max-budget-usd` is what was left of the daily cap: the CLI ending on it is the cap.
+    const budgetExhausted =
+      event.subtype === 'error_max_budget_usd' || event.terminalReason === 'budget_exhausted';
     const cap = this.repository.getBrigadeConfig().dailyCapUsd;
     const spent = this.spentToday();
-    if (cap > 0 && spent >= cap && run.endReason === null) {
+    if (run.endReason === null && (budgetExhausted || (cap > 0 && spent >= cap))) {
       run.endReason = 'usage_cap_reached';
       this.emit({ type: 'budget.exceeded', runId: run.id, capUsd: cap, spentUsd: spent });
-      this.kill(run);
+      // The CLI exits by itself on its budget (exit code 1); a crossing it missed is killed.
+      if (!budgetExhausted) this.kill(run);
     }
   }
 
@@ -522,6 +676,17 @@ export class CrewRunner {
       if (run.child) signalTree(run.child, 'SIGKILL');
     }
   }
+}
+
+/**
+ * The `agentId` of a station worktree (`.claude/worktrees/agent-<agentId>`, on
+ * `worktree-agent-<agentId>`), from a `vcs_state_changed` line's `cwd` or `branch`.
+ */
+export function agentIdOfWorktree(cwd: string | null, branch: string | null): string | null {
+  const fromCwd = cwd ? /[\\/]\.claude[\\/]worktrees[\\/]agent-([A-Za-z0-9_-]+)/.exec(cwd) : null;
+  return (
+    fromCwd?.[1] ?? (branch ? /^worktree-agent-([A-Za-z0-9_-]+)$/.exec(branch)?.[1] : null) ?? null
+  );
 }
 
 /** Signals the child's whole process group (POSIX), or the child itself (Windows). */
