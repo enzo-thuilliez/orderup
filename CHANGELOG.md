@@ -72,6 +72,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   longer starts with less than $0.10 of the cap left, and `assign` refuses a ticket repo that
   is not `owner/name`.
 
+### Changed
+
+- Repo tooling: actions pinned by SHA, PR titles and secrets checked in CI, Dependabot,
+  issue forms and labels as code.
+
 ## [0.1.0] - 2026-09-27
 
 First release on npm: `npx orderup-cli`.
