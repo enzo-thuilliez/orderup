@@ -61,8 +61,11 @@ Run lint, format:check, typecheck, test, build and smoke before proposing a PR. 
 
 ## Conventions
 
-- **Never commit or push to `main`.** Work on a feature branch (`feat/…`, `fix/…`, `docs/…`,
-  `chore/…`) and open a PR. CI must pass before merge.
+- **Never commit or push to `main`.** Work on a branch and open a PR. CI must pass before
+  merge (`ci-pass`, PR title, gitleaks); the maintainer squash-merges. Never merge yourself.
+- **Issues** carry one `type:*`, one or more `area:*`, one `priority:*` and an `agent:*` label
+  (cloud or local), plus the milestone. A change with no issue gets one first.
+- **Docs-only changes** go in their own PR, never mixed into a code PR.
 - **Conventional commits**, enforced by commitlint: `feat(web): add coffee break animation`.
   Scopes: `shared`, `server`, `cli`, `web`, `docs`, `ci`, `deps`, `repo`.
 - TypeScript strict, ESM only. In Node packages, relative imports end in `.js`.
@@ -73,12 +76,12 @@ Run lint, format:check, typecheck, test, build and smoke before proposing a PR. 
 
 - **Start**: read the issue, every issue in its Dependencies and the ADRs it names in
   [DECISIONS.md](DECISIONS.md). If a dependency is still open, stop and say so.
-- **Branch**: `feat/`, `fix/`, `chore/` or `docs/` plus a short slug. One issue, one branch,
-  one PR.
+- **Branch**: `<type>/<issue>-<short-slug>`, e.g. `feat/57-hud-tickets`; `<type>` is the
+  conventional commit type. One issue, one branch, one PR.
 - **PR body**: first line `Closes #N`, or `Part of #N` when the issue says the PR is one step.
   Then What, How, Tests, and anything left for a later PR.
 - **Commits**: conventional, subject lowercase after the type and scope (commitlint rejects
-  `ADR…`, `GitHub…`). PR titles are not linted.
+  `ADR…`, `GitHub…`). The PR title is linted too: it becomes the squash commit.
 - **CHANGELOG**: one bullet under `Unreleased`, added in its own last commit. Never edit
   existing bullets.
 - **Conflicts**: merge `main` into the branch. Never rebase, never force push (denied by
@@ -106,6 +109,14 @@ Run lint, format:check, typecheck, test, build and smoke before proposing a PR. 
 - Prompt text from hooks or transcripts is never stored or broadcast. The one exception
   (ADR-017): the cook panel's live terminal may show it over the token-authenticated crew
   channel, held in memory only. Without `--crew` it shows none.
+
+## Code intelligence
+
+This repo is indexed with **GitNexus** (TypeScript monorepo, docs are small).
+
+- Refresh: `gitnexus analyze` at the repo root (the hooks also reindex after commits).
+- Before changing a wire type in `orderup-shared`, the session reducer or a hook payload
+  handler, run GitNexus impact analysis and list the affected callers in the PR.
 
 ## When you change things
 
