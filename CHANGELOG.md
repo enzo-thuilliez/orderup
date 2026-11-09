@@ -76,6 +76,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Repo tooling: actions pinned by SHA, PR titles and secrets checked in CI, Dependabot,
   issue forms and labels as code.
+- Dependabot no longer proposes major TypeScript upgrades; those need a deliberate migration.
 
 ## [0.1.0] - 2026-09-27
 
