@@ -1,9 +1,18 @@
+<div align="center">
+
 # OrderUp
 
 **Your Claude Code sessions, cooking in a cozy 3D kitchen.**
 
 [![CI](https://github.com/enzo-thuilliez/orderup/actions/workflows/ci.yml/badge.svg)](https://github.com/enzo-thuilliez/orderup/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-orange.svg)](LICENSE)
+[![npm](https://img.shields.io/npm/v/orderup-cli?style=flat-square&color=111)](https://www.npmjs.com/package/orderup-cli)
+[![License: MIT](https://img.shields.io/badge/license-MIT-111?style=flat-square)](LICENSE)
+![Node 22.13+](https://img.shields.io/badge/node-%E2%89%A522.13-111?style=flat-square)
+![Local only](https://img.shields.io/badge/runs-127.0.0.1%20only-111?style=flat-square)
+
+[Quick start](#quick-start) · [Usage](#usage) · [How it works](#how-it-works) · [Privacy](#privacy) · [Roadmap](ROADMAP.md)
+
+</div>
 
 <p align="center">
   <img src="docs/assets/demo.gif" width="800" alt="The OrderUp kitchen: cooks at their stations, one ringing the bell at the pass, one plating up, one on a coffee break out back, commis cooks beside their chef and token tickets on the rail.">
@@ -70,6 +79,13 @@ orderup [options]
   event through the installed hook.
 
 ## How it works
+
+```mermaid
+flowchart LR
+    cc["Claude Code<br/>sessions"] -- "hooks" --> server["OrderUp server<br/>127.0.0.1:7717"]
+    tx[("~/.claude/projects<br/>transcripts")] -. "tailed for tokens" .-> server
+    server -- "WebSocket" --> web["three.js kitchen<br/>in your browser"]
+```
 
 1. Claude Code hooks send session events to a server on `127.0.0.1:7717`.
 2. The server also tails your local transcripts in `~/.claude/projects` for token usage and sessions started before OrderUp.

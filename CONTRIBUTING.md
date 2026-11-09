@@ -34,7 +34,7 @@ CI runs `lint`, `format:check`, `typecheck`, `test`, `build` and `smoke` on Node
 ## Workflow
 
 1. Pick or open an issue. Feature issues are "order tickets".
-2. Branch from `main`: `feat/<short-name>`, `fix/…`, `docs/…` or `chore/…`.
+2. Branch from `main` as `<type>/<issue>-<short-slug>`, e.g. `feat/57-hud-tickets`.
 3. Commit with [Conventional Commits](https://www.conventionalcommits.org/):
    `type(scope): summary`, e.g. `feat(web): add coffee break animation`.
    Scopes: `shared`, `server`, `cli`, `web`, `docs`, `ci`, `deps`, `repo`.
