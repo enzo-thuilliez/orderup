@@ -1,0 +1,42 @@
+name: Order ticket (feature)
+description: Propose something new for the kitchen
+title: 'feat(scope): '
+labels: ['type:feat']
+body:
+  - type: markdown
+    attributes:
+      value: Add one or more `area:*` labels, one `priority:*`, an `agent:*` label and the milestone.
+  - type: textarea
+    id: order
+    attributes:
+      label: The order
+      description: What should happen, from the viewer's point of view?
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+    validations:
+      required: true
+  - type: input
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Issues that must be closed first, or "None".
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance
+      value: |
+        - [ ]
+        - [ ] lint, format:check, typecheck, test, build and smoke pass
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Scope (shared / server / cli / web), related ADRs, sketches.

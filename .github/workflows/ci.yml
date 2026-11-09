@@ -12,6 +12,8 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Every action is pinned to a commit SHA, with its tag in a comment; Dependabot bumps both.
+
 jobs:
   ci:
     name: ci (node ${{ matrix.node }})
@@ -24,8 +26,8 @@ jobs:
     env:
       SKIP_INSTALL_SIMPLE_GIT_HOOKS: '1'
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
           cache: npm
@@ -39,7 +41,7 @@ jobs:
       - name: Smoke-test the packed orderup-cli
         run: node scripts/smoke-pack.mjs "$RUNNER_TEMP"/pack/orderup-cli-*.tgz
       - if: matrix.node == '24'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: orderup-cli-tarball
           path: ${{ runner.temp }}/pack/orderup-cli-*.tgz
@@ -60,11 +62,11 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: orderup-cli-tarball
           path: pack

@@ -19,6 +19,8 @@ concurrency:
   group: release
   cancel-in-progress: false
 
+# Every action is pinned to a commit SHA, with its tag in a comment; Dependabot bumps both.
+
 jobs:
   publish:
     name: publish orderup-cli
@@ -33,12 +35,12 @@ jobs:
       SKIP_INSTALL_SIMPLE_GIT_HOOKS: '1'
       DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       # v6.1+ no longer writes the always-auth setting npm 11 warns about; v7 also drops the
       # dummy NODE_AUTH_TOKEN it exported, which trusted publishing (OIDC) does not need.
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
