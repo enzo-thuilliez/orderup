@@ -1,0 +1,25 @@
+name: Task
+description: Chore, refactor, docs, CI or dependency work with a clear checklist
+title: 'chore(scope): '
+labels: ['type:chore']
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should be true once this is done?
+    validations:
+      required: true
+  - type: textarea
+    id: checklist
+    attributes:
+      label: Checklist
+      value: |
+        - [ ]
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Context, links, files likely touched.

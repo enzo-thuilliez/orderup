@@ -18,7 +18,17 @@
       "Bash(git push -u origin fix/*)",
       "Bash(git push -u origin chore/*)",
       "Bash(git push -u origin docs/*)",
-      "Bash(gh pr create:*)"
+      "Bash(gh pr create:*)",
+      "Bash(git fetch:*)",
+      "Bash(git merge:*)",
+      "Bash(git push -u origin refactor/*)",
+      "Bash(git push -u origin test/*)",
+      "Bash(git push -u origin perf/*)",
+      "Bash(git push -u origin ci/*)",
+      "Bash(gh issue create:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(npx changeset:*)"
     ],
     "deny": [
       "Bash(rm -rf:*)",
@@ -28,7 +38,8 @@
       "Bash(git push * -f*)",
       "Bash(git push *+*)",
       "Bash(git push * main)",
-      "Bash(git push *:main*)"
+      "Bash(git push *:main*)",
+      "Bash(gh pr merge:*)"
     ]
   }
 }

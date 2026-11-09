@@ -10,7 +10,7 @@
 
 ## Checklist
 
-- [ ] Conventional commit title (`feat(web): …`, `fix(server): …`)
+- [ ] Conventional commit title (`feat(web): …`, `fix(server): …`): CI checks it, and it becomes the squash commit
 - [ ] `npm run lint`, `npm run format:check`, `npm run typecheck`, `npm test`, `npm run build` pass
 - [ ] Docs updated if behaviour changed (`docs/architecture.md`, `DECISIONS.md`, `CHANGELOG.md`)
 - [ ] No new network calls, telemetry or LLM calls on the observer path

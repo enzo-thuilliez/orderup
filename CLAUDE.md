@@ -2,8 +2,9 @@
 
 ## Claude Code notes
 
-- `.claude/settings.json` allows `git push -u origin` for `feat/`, `fix/`, `chore/` and
-  `docs/` branches and `gh pr create`. Pushes to `main` and force pushes are denied.
+- `.claude/settings.json` allows `git push -u origin` for `feat/`, `fix/`, `chore/`, `docs/`,
+  `refactor/`, `test/`, `perf/` and `ci/` branches, `gh issue create`, `gh pr create`, reading
+  PR checks and `npx changeset`. Pushes to `main`, force pushes and `gh pr merge` are denied.
 - Project allow rules only load once the workspace is trusted: run `claude` interactively in
   the repo and accept the trust dialog. Until then only the deny rules apply.
 - You are probably being watched by OrderUp while you work on it. Keep hook experiments on a
