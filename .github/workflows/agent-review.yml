@@ -1,0 +1,74 @@
+name: Agent review
+
+# A second agent reviews each pull request against AGENTS.md and posts one comment (plus a few
+# inline ones). It never approves, requests changes, pushes or merges: its tools only allow
+# reading the PR and commenting.
+#
+# Off by default, and it costs API usage. To turn it on:
+#   1. Settings → Secrets → Actions: ANTHROPIC_API_KEY (or CLAUDE_CODE_OAUTH_TOKEN).
+#   2. Settings → Variables → Actions: AGENT_REVIEW_ENABLED = true
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: read
+  id-token: write
+
+concurrency:
+  group: agent-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Every action is pinned to a commit SHA, with its tag in a comment; Dependabot bumps both.
+
+jobs:
+  review:
+    # Skips drafts, bot PRs (Dependabot, release PRs) and forks (no secrets there).
+    if: >-
+      vars.AGENT_REVIEW_ENABLED == 'true' &&
+      !github.event.pull_request.draft &&
+      github.event.pull_request.user.type != 'Bot' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+      - uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1.0.271
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            You review this pull request for the maintainer, who merges. The PR branch is
+            checked out in the working directory.
+
+            1. Read AGENTS.md (and CLAUDE.md if present): it is the rubric. Read the issue the
+               PR closes (`gh issue view <n> --json title,body`; plain `gh issue view` fails on this repo) and its Acceptance section.
+            2. Read the diff (`gh pr diff`) and open the changed files where context matters.
+            3. Check, in this order:
+               - Scope: everything in the diff serves the issue's Acceptance; extra work is
+                 listed under "Left for later" instead.
+               - Tests: changed behaviour has tests; nothing was deleted or skipped to pass.
+               - Numbers: in code that produces user-facing figures or LLM answers, every
+                 number comes from code or data, never from the model.
+               - Contracts and docs: what AGENTS.md says to update in the same PR (docs, ADR,
+                 schema, changelog) is updated.
+               - Secrets and real data: none in code, tests, fixtures or the PR text.
+               - The repo's conventions from AGENTS.md (naming, structure, error handling).
+            4. Post ONE top-level comment with `gh pr comment`, in this shape:
+               "### Agent review" then "**Blocking**", "**Should fix**", "**Nits**" (omit an
+               empty section), each finding one line with `file:line` and why. End with one
+               line saying what you did not check. If nothing is wrong, say so in one line.
+               Add at most 5 inline comments with
+               `mcp__github_inline_comment__create_inline_comment` (`confirmed: true`) for
+               blocking findings only.
+
+            Be specific and brief. Do not restate the diff. Do not praise. Only post GitHub
+            comments; do not answer in messages.
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh issue view:*),Read,Grep,Glob"

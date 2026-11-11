@@ -15,3 +15,12 @@ packages/cli/LICENSE
 
 # scripts/probe-claude-cli.mjs output (stream-json of real runs)
 scripts/.probe-out/
+
+# editors
+.idea/
+
+# Local agent artifacts (regenerated, never committed)
+.gitnexus/
+graphify-out/
+floorplan/
+CLAUDE.local.md
