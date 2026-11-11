@@ -85,6 +85,8 @@ flowchart LR
     cc["Claude Code<br/>sessions"] -- "hooks" --> server["OrderUp server<br/>127.0.0.1:7717"]
     tx[("~/.claude/projects<br/>transcripts")] -. "tailed for tokens" .-> server
     server -- "WebSocket" --> web["three.js kitchen<br/>in your browser"]
+    %% server: packages/server/src
+    %% web: packages/web/src
 ```
 
 1. Claude Code hooks send session events to a server on `127.0.0.1:7717`.
