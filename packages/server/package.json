@@ -29,7 +29,7 @@
   },
   "dependencies": {
     "orderup-shared": "^0.0.0",
-    "ws": "^8.22.1"
+    "ws": "^8.23.0"
   },
   "devDependencies": {
     "@types/ws": "^8.18.2"
